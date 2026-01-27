@@ -1,551 +1,546 @@
 # app.py
-from __future__ import annotations
-
-import io
-import numpy as np
-import pandas as pd
+import base64
+from pathlib import Path
 import streamlit as st
 import streamlit.components.v1 as components
 
-# =========================================================
-# Page config
-# =========================================================
-st.set_page_config(
-    page_title="AHP (Saaty) — Section 3 (GM + Consistency)",
-    layout="wide",
-)
+st.set_page_config(page_title="AHP-Rank", layout="wide")
+APP_DIR = Path(__file__).resolve().parent
 
-# =========================================================
-# Theme (Dark/Light) + Styling (SYAI-Rank vibe)
-# =========================================================
-if "theme_mode" not in st.session_state:
-    st.session_state["theme_mode"] = "Dark"
+# ---------- Single source of truth for SAMPLE (PAIRWISE) CSV ----------
+def load_sample_csv_text() -> str:
+    # If you already have a sample file, uncomment and set path
+    # p = Path("/mnt/data/sample_pairwise.csv")
+    # if p.exists():
+    #     for enc in ("utf-8", "latin-1"):
+    #         try:
+    #             return p.read_text(encoding=enc)
+    #         except Exception:
+    #             pass
 
-THEME = st.session_state["theme_mode"]
+    # Fallback: AHP pairwise sample (7x7) using fractions
+    return (
+        "Criteria,B1,B2,B3,B4,B5,B6,B7\n"
+        "B1,1,1/2,1/3,1/3,1/3,1/5,1\n"
+        "B2,2,1,1/3,1,1/3,1/5,1\n"
+        "B3,3,3,1,3,1,1,1\n"
+        "B4,3,1,1/3,1,1/3,1/3,1/3\n"
+        "B5,3,3,1,3,1,1,1\n"
+        "B6,5,5,1,3,1,1,1\n"
+        "B7,1,1,1,3,1,1,1\n"
+    )
 
-st.markdown(
-    f"""
+SAMPLE_CSV = load_sample_csv_text()
+
+# ------------------------------- HTML APP -------------------------------
+html = r"""
+<!doctype html>
+<html lang="en">
+<head>
+<meta charset="utf-8"/>
+<meta name="viewport" content="width=device-width,initial-scale=1"/>
+<title>AHP-Rank</title>
 <style>
-  :root {{
+  :root{
     --bg-dark:#0b0b0f;
-    --bg-light:#f8fafc;
-    --grad-light:#ffe4e6;
+    --grad-light:#e9d5ff; /* purple blush */
+    --card-dark:#0f1115cc;
+    --card-light:#ffffffcc;
 
-    --card-dark: rgba(15,17,21,.80);
-    --card-light: rgba(255,255,255,.85);
-
-    --border-dark:#262b35;
-    --border-light:#e5e7eb;
-
-    --text-dark:#111;
     --text-light:#f5f5f5;
 
-    --pink:#ec4899;
-    --pink-700:#db2777;
+    /* PURPLE PASTEL THEME */
+    --pri:#a78bfa;        /* purple */
+    --pri-700:#7c3aed;    /* deeper purple */
+    --pri-soft:#ede9fe;   /* very light purple */
+    --border-dark:#262b35;
+    --border-light:#f1f5f9;
+  }
 
-    --muted-dark: rgba(255,255,255,.72);
-    --muted-light: rgba(0,0,0,.65);
-  }}
+  *{box-sizing:border-box}
+  html,body{height:100%;margin:0}
+  body{
+    font-family:ui-sans-serif,system-ui,-apple-system,"Segoe UI",Roboto,Arial;
+    color:var(--text-light);
+    background:linear-gradient(180deg,#0b0b0f 0%,#0b0b0f 35%,var(--grad-light) 120%);
+  }
 
-  .stApp {{
-    background: linear-gradient(180deg,
-      {"#0b0b0f 0%, #0b0b0f 35%, #ffe4e6 120%" if THEME=="Dark"
-        else "#f8fafc 0%, #f8fafc 40%, #ffe4e6 120%"}
-    ) !important;
-  }}
+  .container{max-width:1200px;margin:24px auto;padding:0 16px}
+  .header{display:flex;align-items:center;justify-content:space-between;margin-bottom:12px}
+  .title{font-weight:800;font-size:28px;color:#f3e8ff} /* purple-ish white */
+  .row{display:flex;gap:10px;align-items:center;flex-wrap:wrap}
 
-  [data-testid="stSidebar"] {{
-    background: rgba(255, 228, 230, 0.08) !important;
-    backdrop-filter: blur(6px);
-  }}
+  .btn{
+    display:inline-flex;align-items:center;gap:8px;
+    padding:10px 14px;border-radius:12px;
+    border:1px solid var(--pri-700);
+    background:var(--pri);
+    color:#111; /* readable on pastel */
+    cursor:pointer;
+    font-weight:700;
+    text-decoration:none;
+  }
+  .btn:hover{filter:brightness(0.96)}
 
-  .app-title {{
-    font-weight: 900;
-    font-size: 30px;
-    letter-spacing: .2px;
-    margin: 6px 0 10px 0;
-    color: {"#fce7f3" if THEME=="Dark" else "#111"};
-  }}
+  .tabs{display:flex;gap:8px;margin:12px 0;position:relative;z-index:10}
+  .tab{
+    padding:10px 14px;border-radius:12px;
+    border:1px solid #333;background:#202329;color:#ddd;cursor:pointer
+  }
+  .tab.active{background:var(--pri);border-color:var(--pri-700);color:#111;font-weight:800}
 
-  .pill {{
-    display:inline-flex;
-    align-items:center;
-    gap:8px;
-    padding:6px 10px;
-    border-radius:999px;
-    border:1px solid rgba(219,39,119,.85);
-    background: rgba(236,72,153,.18);
-    color: {"#fff" if THEME=="Dark" else "#111"};
-    font-weight: 800;
-    font-size: 12px;
-    margin-right: 8px;
-    margin-bottom: 8px;
-  }}
+  .grid{display:grid;gap:16px;grid-template-columns:1fr}
+  @media (min-width:1024px){.grid{grid-template-columns:1fr 2fr}}
 
-  .card-dark {{
-    border-radius: 16px;
-    padding: 16px;
-    border: 1px solid var(--border-dark);
-    background: var(--card-dark);
-    color: var(--text-light);
-    backdrop-filter: blur(6px);
-  }}
+  .card{
+    border-radius:16px;padding:18px;
+    border:1px solid var(--border-light);
+    backdrop-filter:blur(6px)
+  }
+  .card.dark{background:var(--card-dark);color:#e5e7eb;border-color:var(--border-dark)}
+  .card.light{background:var(--card-light);color:#111;border-color:var(--border-light)}
 
-  .card-light {{
-    border-radius: 16px;
-    padding: 16px;
-    border: 1px solid var(--border-light);
-    background: var(--card-light);
-    color: var(--text-dark);
-    backdrop-filter: blur(6px);
-  }}
+  .section-title{font-weight:700;font-size:18px;margin-bottom:12px;color:#e9d5ff}
+  .hint{font-size:12px;opacity:.85}
 
-  .section-title {{
-    font-weight: 800;
-    font-size: 18px;
-    margin: 0 0 10px 0;
-    color: {"#f9a8d4" if THEME=="Dark" else "#be185d"};
-  }}
+  .table-wrap{overflow:auto;max-height:360px}
+  table{width:100%;border-collapse:collapse;font-size:14px;color:#111}
+  th,td{text-align:left;padding:8px 10px;border-bottom:1px solid #e5e7eb;white-space:nowrap}
 
-  .hint {{
-    font-size: 12px;
-    opacity: .85;
-    color: {"var(--muted-dark)" if THEME=="Dark" else "var(--muted-light)"};
-  }}
+  .chart2{width:100%;height:360px;border:1px dashed #9ca3af;border-radius:12px;background:transparent}
+  .chartTall{width:100%;height:480px;border:1px dashed #9ca3af;border-radius:12px;background:transparent}
 
-  .ok {{ color:#16a34a; font-weight: 900; }}
-  .bad {{ color:#dc2626; font-weight: 900; }}
+  .pill{
+    display:inline-flex;align-items:center;gap:8px;
+    padding:6px 10px;border-radius:999px;
+    border:1px solid rgba(167,139,250,.6);
+    background:rgba(167,139,250,.12);
+    margin:0 6px 6px 0;font-size:12px;color:#fff
+  }
 
-  div[data-testid="stDataFrame"] {{
-    border-radius: 12px;
-    overflow: hidden;
-  }}
+  /* Tooltip */
+  #tt{position:fixed;display:none;pointer-events:none;background:#fff;color:#111;
+      padding:6px 8px;border-radius:8px;font-size:12px;box-shadow:0 12px 24px rgba(0,0,0,.18);border:1px solid #e5e7eb;z-index:9999}
 
-  button[data-baseweb="tab"] {{
-    border-radius: 12px !important;
-    padding-top: 10px !important;
-    padding-bottom: 10px !important;
-  }}
+  .ok{color:#16a34a;font-weight:900}
+  .bad{color:#dc2626;font-weight:900}
 </style>
-""",
-    unsafe_allow_html=True,
-)
+</head>
+<body>
+<div class="container">
 
-# =========================================================
-# Saaty RI table
-# =========================================================
-RI_TABLE = {
-    1: 0.00, 2: 0.00, 3: 0.58, 4: 0.90, 5: 1.12, 6: 1.24, 7: 1.32, 8: 1.41, 9: 1.45, 10: 1.49,
-    11: 1.51, 12: 1.48, 13: 1.56, 14: 1.57, 15: 1.59
-}
+  <div class="header">
+    <div class="title">AHP-Rank</div>
+    <div class="row">
+      <a class="btn" id="downloadSample">⬇️ Download Sample</a>
+      <button class="btn" id="loadSample">📄 Load Sample</button>
+    </div>
+  </div>
 
-def RI(m: int) -> float:
-    if m in RI_TABLE:
-        return RI_TABLE[m]
-    if m <= 2:
-        return 0.0
-    return 1.98 * (m - 2) / m
+  <div class="tabs">
+    <button type="button" class="tab active" id="tabAHP">AHP Method (Saaty)</button>
+  </div>
 
-# =========================================================
-# Sample CSV (pairwise matrix)
-# =========================================================
-SAMPLE = """B,B1,B2,B3,B4,B5,B6,B7
-B1,1,1/2,1/3,1/3,1/3,1/5,1
-B2,2,1,1/3,1,1/3,1/5,1
-B3,3,3,1,3,1,1,1
-B4,3,1,1/3,1,1/3,1/3,1/3
-B5,3,3,1,3,1,1,1
-B6,5,5,1,3,1,1,1
-B7,1,1,1,3,1,1,1
+  <div class="grid">
+    <!-- LEFT -->
+    <div>
+      <div class="card dark">
+        <div class="section-title">Step 1: Upload Pairwise Matrix (CSV)</div>
+        <label for="csv1" class="btn">📤 Choose CSV</label>
+        <input id="csv1" type="file" accept=".csv" style="display:none"/>
+        <p class="hint">Format: first column = row labels, first row = column labels. Must be square. Values can be <b>1</b>, <b>2</b>, <b>1/3</b>, etc.</p>
+      </div>
+
+      <div id="stat" class="card dark" style="display:none">
+        <div class="section-title">Consistency Summary</div>
+        <div id="statBox" class="hint"></div>
+        <div style="margin-top:10px">
+          <span class="pill">Step 2 Π</span>
+          <span class="pill">Step 3 GM</span>
+          <span class="pill">Step 4 ω</span>
+          <span class="pill">Step 5 P×ω</span>
+          <span class="pill">Step 6 λmax</span>
+          <span class="pill">Step 7 SI & CR</span>
+        </div>
+      </div>
+
+      <div id="wcard" class="card dark" style="display:none">
+        <div class="section-title">Weights (ω) — Bar Chart</div>
+        <div class="chart2"><svg id="barW" width="100%" height="100%"></svg></div>
+        <div class="hint" style="margin-top:8px">Hover bar untuk nilai ω.</div>
+      </div>
+
+      <div id="lcard" class="card dark" style="display:none">
+        <div class="section-title">λᵢ Trend — Line Chart</div>
+        <div class="chart2"><svg id="lineL" width="100%" height="100%"></svg></div>
+        <div class="hint" style="margin-top:8px">Line menunjukkan λᵢ = (Pω)ᵢ / ωᵢ.</div>
+      </div>
+    </div>
+
+    <!-- RIGHT -->
+    <div>
+      <div id="m1" class="card light" style="display:none">
+        <div class="section-title">Pairwise Matrix P (numeric)</div>
+        <div class="table-wrap"><table id="tblP"></table></div>
+      </div>
+
+      <div id="s2" class="card light" style="display:none">
+        <div class="section-title">Step 2: Row Product Πᵢ = ∏ⱼ pᵢⱼ</div>
+        <div class="table-wrap"><table id="tblPi"></table></div>
+      </div>
+
+      <div id="s3" class="card light" style="display:none">
+        <div class="section-title">Step 3: GMᵢ = (Πᵢ)^(1/m)</div>
+        <div class="table-wrap"><table id="tblGM"></table></div>
+      </div>
+
+      <div id="s4" class="card light" style="display:none">
+        <div class="section-title">Step 4: Weights ωᵢ = GMᵢ / ΣGM</div>
+        <div class="table-wrap"><table id="tblW"></table></div>
+      </div>
+
+      <div id="s5" class="card light" style="display:none">
+        <div class="section-title">Step 5: (pᵢⱼ × ωⱼ) and (Pω)ᵢ (row-sum)</div>
+        <div class="table-wrap"><table id="tblMul"></table></div>
+        <div style="margin-top:10px" class="table-wrap"><table id="tblPw"></table></div>
+      </div>
+
+      <div id="s6" class="card light" style="display:none">
+        <div class="section-title">Step 6: λᵢ = (Pω)ᵢ / ωᵢ and λmax</div>
+        <div class="table-wrap"><table id="tblLam"></table></div>
+      </div>
+
+      <div id="s7" class="card light" style="display:none">
+        <div class="section-title">Step 7: SI and CR</div>
+        <div class="table-wrap"><table id="tblCR"></table></div>
+      </div>
+    </div>
+  </div>
+
+</div>
+
+<!-- tooltip -->
+<div id="tt"></div>
+
+<script>
+(function(){
+  const $  = (id)=> document.getElementById(id);
+  const show = (el,on=true)=> el.style.display = on ? "" : "none";
+
+  // purple-ish pastels for bars
+  const PASTELS = ["#a78bfa","#c4b5fd","#ddd6fe","#f5d0fe","#e9d5ff","#c7d2fe","#fbcfe8","#bfdbfe","#d1fae5","#fde68a"];
+
+  // ---------- injected by Python ----------
+  const SAMPLE_TEXT = `__INJECT_SAMPLE_CSV__`;
+
+  $("downloadSample").href = "data:text/csv;charset=utf-8,"+encodeURIComponent(SAMPLE_TEXT);
+  $("downloadSample").download = "ahp_pairwise_sample.csv";
+  $("loadSample").onclick = ()=> initAHP(SAMPLE_TEXT);
+
+  // ---------- CSV parser ----------
+  function parseCSVText(text){
+    const rows=[]; let i=0, cur="", inQ=false, row=[];
+    const pushCell=()=>{ row.push(cur); cur=""; };
+    const pushRow =()=>{ rows.push(row); row=[]; };
+    while(i<text.length){
+      const ch=text[i];
+      if(inQ){
+        if(ch==='\"'){ if(text[i+1]==='\"'){ cur+='\"'; i++; } else { inQ=false; } }
+        else cur+=ch;
+      }else{
+        if(ch==='\"') inQ=true;
+        else if(ch===',') pushCell();
+        else if(ch==='\n'){ pushCell(); pushRow(); }
+        else if(ch==='\r'){}
+        else cur+=ch;
+      }
+      i++;
+    }
+    pushCell(); if(row.length>1 || row[0] !== "") pushRow();
+    return rows.map(r=> r.map(x=> String(x ?? "").trim()));
+  }
+
+  function parseRatio(v){
+    const s = String(v??"").trim();
+    if(!s) return NaN;
+    if(s.includes("/")){
+      const parts = s.split("/");
+      if(parts.length!==2) return NaN;
+      const a = parseFloat(parts[0].trim());
+      const b = parseFloat(parts[1].trim());
+      if(!isFinite(a) || !isFinite(b) || b===0) return NaN;
+      return a/b;
+    }
+    const x = parseFloat(s);
+    return isFinite(x) ? x : NaN;
+  }
+
+  // Saaty RI table
+  const RI_TABLE = {1:0,2:0,3:0.58,4:0.90,5:1.12,6:1.24,7:1.32,8:1.41,9:1.45,10:1.49,11:1.51,12:1.48,13:1.56,14:1.57,15:1.59};
+  function RI(m){
+    if(RI_TABLE[m]!=null) return RI_TABLE[m];
+    if(m<=2) return 0;
+    return 1.98*(m-2)/m;
+  }
+
+  // ---------- render table ----------
+  function renderTable(tableId, cols, rows){
+    const tb=$(tableId); tb.innerHTML="";
+    const thead=document.createElement("thead");
+    const trh=document.createElement("tr");
+    cols.forEach(c=>{ const th=document.createElement("th"); th.textContent=c; trh.appendChild(th); });
+    thead.appendChild(trh); tb.appendChild(thead);
+
+    const tbody=document.createElement("tbody");
+    rows.forEach(r=>{
+      const tr=document.createElement("tr");
+      r.forEach(cell=>{
+        const td=document.createElement("td");
+        td.textContent = cell;
+        tr.appendChild(td);
+      });
+      tbody.appendChild(tr);
+    });
+    tb.appendChild(tbody);
+  }
+
+  // ---------- Tooltip ----------
+  const TT = $("tt");
+  function showTT(x,y,html){ TT.style.display="block"; TT.style.left=(x+12)+"px"; TT.style.top=(y+12)+"px"; TT.innerHTML=html; }
+  function hideTT(){ TT.style.display="none"; }
+
+  // ---------- Charts ----------
+  function drawBar(svgId, data){
+    const svg=$(svgId); while(svg.firstChild) svg.removeChild(svg.firstChild);
+    const W=(svg.getBoundingClientRect().width||800), H=(svg.getBoundingClientRect().height||360);
+    svg.setAttribute("viewBox","0 0 "+W+" "+H);
+    const padL=50,padR=20,padT=18,padB=44;
+    const max=Math.max(...data.map(d=>d.value))||1;
+    const cell=(W-padL-padR)/data.length, barW=cell*0.8;
+
+    const yAxis=document.createElementNS("http://www.w3.org/2000/svg","line");
+    yAxis.setAttribute("x1",padL); yAxis.setAttribute("x2",padL); yAxis.setAttribute("y1",padT); yAxis.setAttribute("y2",H-padB); yAxis.setAttribute("stroke","#000"); svg.appendChild(yAxis);
+    const xAxis=document.createElementNS("http://www.w3.org/2000/svg","line");
+    xAxis.setAttribute("x1",padL); xAxis.setAttribute("x2",W-padR); xAxis.setAttribute("y1",H-padB); xAxis.setAttribute("y2",H-padB); xAxis.setAttribute("stroke","#000"); svg.appendChild(xAxis);
+
+    for(let t=0;t<=5;t++){
+      const val=max*t/5, y=H-padB-(H-padT-padB)*(val/max);
+      const gl=document.createElementNS("http://www.w3.org/2000/svg","line");
+      gl.setAttribute("x1",padL); gl.setAttribute("x2",W-padR); gl.setAttribute("y1",y); gl.setAttribute("y2",y);
+      gl.setAttribute("stroke","#000"); gl.setAttribute("stroke-dasharray","3 3"); svg.appendChild(gl);
+      const tx=document.createElementNS("http://www.w3.org/2000/svg","text");
+      tx.setAttribute("x",padL-10); tx.setAttribute("y",y+4); tx.setAttribute("text-anchor","end");
+      tx.setAttribute("font-size","12"); tx.setAttribute("fill","#000"); tx.textContent=val.toFixed(3); svg.appendChild(tx);
+    }
+
+    data.forEach((d,i)=>{
+      const x=padL+i*cell+(cell-barW)/2, h=(H-padT-padB)*(d.value/max), y=H-padB-h;
+      const r=document.createElementNS("http://www.w3.org/2000/svg","rect");
+      r.setAttribute("x",x); r.setAttribute("y",y); r.setAttribute("width",barW); r.setAttribute("height",h);
+      r.setAttribute("fill", PASTELS[i%PASTELS.length]);
+      r.addEventListener("mousemove",(ev)=> showTT(ev.clientX, ev.clientY, `<b>${d.name}</b><br/>ω = ${d.value.toFixed(6)}`));
+      r.addEventListener("mouseleave", hideTT);
+      svg.appendChild(r);
+
+      const lbl=document.createElementNS("http://www.w3.org/2000/svg","text");
+      lbl.setAttribute("x",x+barW/2); lbl.setAttribute("y",H-12); lbl.setAttribute("text-anchor","middle");
+      lbl.setAttribute("font-size","12"); lbl.setAttribute("fill","#000"); lbl.textContent=d.name; svg.appendChild(lbl);
+    });
+  }
+
+  function drawLine(svgId, data){
+    const svg=$(svgId); while(svg.firstChild) svg.removeChild(svg.firstChild);
+    const W=(svg.getBoundingClientRect().width||800), H=(svg.getBoundingClientRect().height||300);
+    svg.setAttribute("viewBox","0 0 "+W+" "+H);
+    const padL=50,padR=20,padT=14,padB=30;
+
+    const maxY=Math.max(...data.map(d=>d.value))||1;
+    const minX=1, maxX=Math.max(...data.map(d=>d.x))||1;
+
+    const sx=(x)=> padL+(W-padL-padR)*((x-minX)/(maxX-minX||1));
+    const sy=(v)=> H-padB-(H-padT-padB)*(v/maxY);
+
+    const yAxis=document.createElementNS("http://www.w3.org/2000/svg","line");
+    yAxis.setAttribute("x1",padL); yAxis.setAttribute("x2",padL); yAxis.setAttribute("y1",padT); yAxis.setAttribute("y2",H-padB); yAxis.setAttribute("stroke","#000"); svg.appendChild(yAxis);
+    const xAxis=document.createElementNS("http://www.w3.org/2000/svg","line");
+    xAxis.setAttribute("x1",padL); xAxis.setAttribute("x2",W-padR); xAxis.setAttribute("y1",H-padB); xAxis.setAttribute("y2",H-padB); xAxis.setAttribute("stroke","#000"); svg.appendChild(xAxis);
+
+    const p=document.createElementNS("http://www.w3.org/2000/svg","path");
+    let dstr="";
+    data.sort((a,b)=> a.x-b.x).forEach((pt,i)=>{
+      const x=sx(pt.x), y=sy(pt.value);
+      dstr += (i===0? "M":"L")+x+" "+y+" ";
+
+      const c=document.createElementNS("http://www.w3.org/2000/svg","circle");
+      c.setAttribute("cx",x); c.setAttribute("cy",y); c.setAttribute("r","4"); c.setAttribute("fill","#111");
+      c.addEventListener("mousemove",(ev)=> showTT(ev.clientX, ev.clientY, `<b>${pt.name}</b><br/>λᵢ = ${pt.value.toFixed(6)}`));
+      c.addEventListener("mouseleave", hideTT);
+      svg.appendChild(c);
+
+      const tx=document.createElementNS("http://www.w3.org/2000/svg","text");
+      tx.setAttribute("x",x); tx.setAttribute("y",H-10);
+      tx.setAttribute("text-anchor","middle"); tx.setAttribute("font-size","11"); tx.setAttribute("fill","#000");
+      tx.textContent = pt.x; svg.appendChild(tx);
+    });
+    p.setAttribute("d", dstr.trim()); p.setAttribute("fill","none"); p.setAttribute("stroke","#111"); p.setAttribute("stroke-width","2");
+    svg.appendChild(p);
+  }
+
+  // ---------- AHP core ----------
+  function initAHP(txt){
+    const arr=parseCSVText(txt);
+    if(!arr.length) return;
+
+    const header = arr[0];
+    if(header.length<2) return;
+
+    const colLabels = header.slice(1);     // columns after first
+    const rowLabels = arr.slice(1).map(r=> r[0]).filter(x=> x!=="" );
+
+    const m = rowLabels.length;
+    if(m<2){ alert("Need at least 2 criteria."); return; }
+    if(colLabels.length !== m){ alert("Matrix must be square: number of columns must equal number of rows."); return; }
+
+    // Build numeric matrix P
+    const P = [];
+    for(let i=0;i<m;i++){
+      const r = arr[i+1];
+      if(!r || r.length < m+1){ alert("Some rows are incomplete."); return; }
+      const row = [];
+      for(let j=0;j<m;j++){
+        const v = parseRatio(r[j+1]);
+        if(!isFinite(v) || v<=0){ alert(`Invalid value at row ${rowLabels[i]}, col ${colLabels[j]}`); return; }
+        row.push(v);
+      }
+      P.push(row);
+    }
+
+    // Reciprocal check
+    let maxErr = 0;
+    for(let i=0;i<m;i++){
+      maxErr = Math.max(maxErr, Math.abs(P[i][i]-1));
+      for(let j=i+1;j<m;j++){
+        maxErr = Math.max(maxErr, Math.abs(P[i][j]*P[j][i]-1));
+      }
+    }
+
+    // Step 2: Pi
+    const Pi = P.map(row => row.reduce((a,b)=> a*b, 1));
+
+    // Step 3: GM
+    const GM = Pi.map(v => Math.pow(v, 1/m));
+
+    // Step 4: w
+    const sumGM = GM.reduce((a,b)=> a+b, 0) || 1;
+    const w = GM.map(v => v/sumGM);
+
+    // Step 5: multiply table (p_ij * w_j) and Pw
+    const Mul = [];
+    const Pw = [];
+    for(let i=0;i<m;i++){
+      const r = [];
+      let s = 0;
+      for(let j=0;j<m;j++){
+        const x = P[i][j]*w[j];
+        r.push(x);
+        s += x;
+      }
+      Mul.push(r);
+      Pw.push(s);
+    }
+
+    // Step 6: lambda_i and lambda_max
+    const lam = Pw.map((v,i)=> v/(w[i] || 1e-18));
+    const lam_max = lam.reduce((a,b)=> a+b, 0)/m;
+
+    // Step 7: SI and CR
+    const SI = (m<=2) ? 0 : (lam_max - m)/(m-1);
+    const ri = RI(m);
+    const CR = (ri===0) ? 0 : (SI/ri);
+
+    // ---------- Render tables ----------
+    // P table (numeric)
+    const Pcols = [" "].concat(colLabels);
+    const Prows = rowLabels.map((rl,i)=> [rl].concat(P[i].map(x=> x.toFixed(6))) );
+    renderTable("tblP", Pcols, Prows);
+
+    // Π table
+    renderTable("tblPi", ["Criteria","Π_i"], rowLabels.map((rl,i)=> [rl, Pi[i].toFixed(9)]) );
+
+    // GM table
+    renderTable("tblGM", ["Criteria","GM_i"], rowLabels.map((rl,i)=> [rl, GM[i].toFixed(9)]) );
+
+    // W table
+    renderTable("tblW", ["Criteria","GM_i","ΣGM","ω_i"], rowLabels.map((rl,i)=> [rl, GM[i].toFixed(9), sumGM.toFixed(9), w[i].toFixed(9)]) );
+
+    // Mul + Pw
+    const mulCols = [" "].concat(colLabels);
+    const mulRows = rowLabels.map((rl,i)=> [rl].concat(Mul[i].map(x=> x.toFixed(9))) );
+    renderTable("tblMul", mulCols, mulRows);
+    renderTable("tblPw", ["Criteria","(Pω)_i (row-sum)"], rowLabels.map((rl,i)=> [rl, Pw[i].toFixed(9)]) );
+
+    // Lambda
+    renderTable("tblLam", ["Criteria","ω_i","(Pω)_i","λ_i"], rowLabels.map((rl,i)=> [rl, w[i].toFixed(9), Pw[i].toFixed(9), lam[i].toFixed(9)]) );
+
+    // CR table
+    renderTable("tblCR",
+      ["m","λmax","SI","RI","CR","Decision"],
+      [[
+        String(m),
+        lam_max.toFixed(9),
+        SI.toFixed(9),
+        ri.toFixed(4),
+        CR.toFixed(9),
+        (CR<=0.10 ? "ACCEPTABLE (≤0.10)" : "NOT OK (>0.10)")
+      ]]
+    );
+
+    // ---------- Summary box ----------
+    const ok = (CR<=0.10);
+    $("statBox").innerHTML = `
+      <div>Reciprocal check max error: <b>${maxErr.toExponential(2)}</b></div>
+      <div style="margin-top:6px"><b>λmax</b> = ${lam_max.toFixed(9)}</div>
+      <div><b>SI</b> = ${SI.toFixed(9)}</div>
+      <div><b>RI</b> = ${ri.toFixed(4)}</div>
+      <div><b>CR</b> = ${CR.toFixed(9)} &nbsp;→&nbsp; ${ok ? '<span class="ok">ACCEPTABLE</span>' : '<span class="bad">NOT OK</span>'}</div>
+    `;
+
+    // ---------- Charts ----------
+    drawBar("barW", rowLabels.map((name,i)=> ({name, value:w[i]})));
+    drawLine("lineL", rowLabels.map((name,i)=> ({name, x:i+1, value:lam[i]})));
+
+    // ---------- Show sections ----------
+    show($("stat"),true);
+    show($("wcard"),true);
+    show($("lcard"),true);
+    show($("m1"),true);
+    show($("s2"),true);
+    show($("s3"),true);
+    show($("s4"),true);
+    show($("s5"),true);
+    show($("s6"),true);
+    show($("s7"),true);
+  }
+
+  // file upload
+  $("csv1").onchange = (e)=>{
+    const f=e.target.files[0];
+    if(!f) return;
+    const r=new FileReader();
+    r.onload=()=> initAHP(String(r.result));
+    r.readAsText(f);
+  };
+
+  // preload sample
+  initAHP(SAMPLE_TEXT);
+
+})();
+</script>
+</body>
+</html>
 """
 
-# =========================================================
-# Helpers (UNCHANGED)
-# =========================================================
-def parse_ratio(x) -> float:
-    if pd.isna(x):
-        raise ValueError("Empty cell detected.")
-    s = str(x).strip()
-    if s == "":
-        raise ValueError("Empty cell detected.")
-    s = s.replace("\\", "/")
+# inject sample
+html = html.replace("__INJECT_SAMPLE_CSV__", SAMPLE_CSV.replace("`","\\`"))
 
-    if "/" in s:
-        parts = s.split("/")
-        if len(parts) != 2:
-            raise ValueError(f"Invalid fraction: {s}")
-        num = float(parts[0].strip())
-        den = float(parts[1].strip())
-        if den == 0:
-            raise ValueError(f"Division by zero: {s}")
-        v = num / den
-    else:
-        v = float(s)
-
-    if not np.isfinite(v) or v <= 0:
-        raise ValueError(f"Value must be positive: {s}")
-    return float(v)
-
-def read_pairwise_csv(uploaded_bytes: bytes) -> pd.DataFrame:
-    text = uploaded_bytes.decode("utf-8", errors="ignore")
-    for sep in [",", "\t", ";"]:
-        try:
-            df = pd.read_csv(io.StringIO(text), sep=sep, header=0, index_col=0)
-            if df.shape[0] >= 2 and df.shape[0] == df.shape[1]:
-                df.columns = [str(c).strip() for c in df.columns]
-                df.index = [str(i).strip() for i in df.index]
-                return df
-        except Exception:
-            pass
-    raise ValueError("CSV not recognized. Need square matrix with row labels in first column.")
-
-def to_numeric_df(df_raw: pd.DataFrame) -> pd.DataFrame:
-    mat = np.zeros(df_raw.shape, dtype=float)
-    for i in range(df_raw.shape[0]):
-        for j in range(df_raw.shape[1]):
-            mat[i, j] = parse_ratio(df_raw.iat[i, j])
-    return pd.DataFrame(mat, index=df_raw.index, columns=df_raw.columns)
-
-def check_square_and_labels(df: pd.DataFrame) -> None:
-    if df.shape[0] != df.shape[1]:
-        raise ValueError("Matrix is not square.")
-
-def check_reciprocal(P: np.ndarray) -> tuple[bool, float]:
-    m = P.shape[0]
-    errs = []
-    for i in range(m):
-        errs.append(abs(P[i, i] - 1.0))
-        for j in range(i + 1, m):
-            errs.append(abs(P[i, j] * P[j, i] - 1.0))
-    mx = float(max(errs)) if errs else 0.0
-    return (mx <= 1e-6), mx
-
-# ---------------- Paper Section 3 steps (UNCHANGED) ----------------
-def step2_row_product(P: np.ndarray) -> np.ndarray:
-    return np.prod(P, axis=1)
-
-def step3_gm(Pi: np.ndarray, m: int) -> np.ndarray:
-    return Pi ** (1.0 / m)
-
-def step4_weights(GM: np.ndarray) -> np.ndarray:
-    s = float(np.sum(GM))
-    if s == 0:
-        raise ValueError("Sum(GM) is zero.")
-    return GM / s
-
-def step5_full_multiply(P: np.ndarray, w: np.ndarray) -> tuple[np.ndarray, np.ndarray]:
-    M = P * w.reshape(1, -1)
-    Pw = np.sum(M, axis=1)
-    return M, Pw
-
-def step6_lambda(Pw: np.ndarray, w: np.ndarray) -> tuple[np.ndarray, float]:
-    lam = Pw / np.where(w == 0, 1e-18, w)
-    lam_max = float(np.mean(lam))
-    return lam, lam_max
-
-def step7_consistency(lam_max: float, m: int) -> tuple[float, float, float]:
-    if m <= 2:
-        return 0.0, RI(m), 0.0
-    SI = (lam_max - m) / (m - 1)
-    ri = RI(m)
-    CR = 0.0 if ri == 0 else SI / ri
-    return float(SI), float(ri), float(CR)
-
-# =========================================================
-# SVG Pastel Bar Chart (NO matplotlib)
-# =========================================================
-PASTELS = [
-    "#a5b4fc", "#f9a8d4", "#bae6fd", "#bbf7d0", "#fde68a",
-    "#c7d2fe", "#fecdd3", "#fbcfe8", "#bfdbfe", "#d1fae5"
-]
-
-def render_pastel_bar_svg(labels: list[str], values: np.ndarray, height: int = 320) -> None:
-    vals = [float(v) for v in values.tolist()]
-    n = len(vals)
-    if n == 0:
-        st.info("No weights to plot.")
-        return
-
-    vmax = max(vals) if max(vals) > 0 else 1.0
-
-    # SVG dimensions (responsive)
-    svg_w = 900
-    svg_h = 360
-    padL, padR, padT, padB = 60, 20, 20, 70
-    plotW = svg_w - padL - padR
-    plotH = svg_h - padT - padB
-    cell = plotW / n
-    barW = cell * 0.75
-
-    # build bars + labels
-    bars = []
-    ticks = []
-    # y grid + ticks (0..5)
-    for t in range(6):
-        yv = vmax * t / 5.0
-        y = padT + plotH - (plotH * (yv / vmax))
-        ticks.append(
-            f"""
-            <line x1="{padL}" y1="{y:.2f}" x2="{svg_w-padR}" y2="{y:.2f}"
-                  stroke="#000" stroke-dasharray="3 3" opacity="0.25"/>
-            <text x="{padL-10}" y="{y+4:.2f}" font-size="12" text-anchor="end" fill="#000">{yv:.3f}</text>
-            """
-        )
-
-    for i, (lab, v) in enumerate(zip(labels, vals)):
-        h = plotH * (v / vmax)
-        x = padL + i * cell + (cell - barW) / 2
-        y = padT + (plotH - h)
-        color = PASTELS[i % len(PASTELS)]
-        bars.append(
-            f"""
-            <g>
-              <rect x="{x:.2f}" y="{y:.2f}" width="{barW:.2f}" height="{h:.2f}"
-                    rx="8" ry="8"
-                    fill="{color}">
-                <title>{lab}: {v:.9f}</title>
-              </rect>
-              <text x="{x + barW/2:.2f}" y="{svg_h-18}" font-size="12" text-anchor="middle" fill="#000">
-                {lab}
-              </text>
-            </g>
-            """
-        )
-
-    # axes
-    axes = f"""
-      <line x1="{padL}" y1="{padT}" x2="{padL}" y2="{svg_h-padB}" stroke="#000"/>
-      <line x1="{padL}" y1="{svg_h-padB}" x2="{svg_w-padR}" y2="{svg_h-padB}" stroke="#000"/>
-      <text x="{padL}" y="{padT-4}" font-size="12" fill="#000">ω (weights)</text>
-    """
-
-    html = f"""
-    <div style="width:100%; border:1px dashed #9ca3af; border-radius:12px; padding:10px; background:transparent;">
-      <svg width="100%" height="{height}" viewBox="0 0 {svg_w} {svg_h}" preserveAspectRatio="xMidYMid meet">
-        {axes}
-        {''.join(ticks)}
-        {''.join(bars)}
-      </svg>
-      <div style="font-size:12px; opacity:.75; margin-top:6px;">Hover bar untuk nilai ω.</div>
-    </div>
-    """
-    components.html(html, height=height + 60, scrolling=False)
-
-# =========================================================
-# Sidebar controls
-# =========================================================
-with st.sidebar:
-    st.markdown("### Theme")
-    light_mode = st.toggle("Light mode", value=(st.session_state["theme_mode"] == "Light"))
-    st.session_state["theme_mode"] = "Light" if light_mode else "Dark"
-
-    st.markdown("---")
-    st.markdown("### Upload Pairwise Matrix CSV")
-    st.download_button(
-        "⬇️ Download sample CSV",
-        data=SAMPLE.encode("utf-8"),
-        file_name="sample_pairwise_matrix.csv",
-        mime="text/csv",
-        use_container_width=True,
-    )
-    uploaded = st.file_uploader("📤 Choose CSV", type=["csv", "txt"])
-    st.caption("Format: square matrix, first col = row labels, cells can be 1/3 etc.")
-
-# =========================================================
-# Header
-# =========================================================
-st.markdown("<div class='app-title'>AHP (Saaty) — Section 3 (GM + Consistency)</div>", unsafe_allow_html=True)
-st.markdown(
-    """
-<span class='pill'>Step 1 Upload P</span>
-<span class='pill'>Step 2 Π</span>
-<span class='pill'>Step 3 GM</span>
-<span class='pill'>Step 4 ω</span>
-<span class='pill'>Step 5 P×ω</span>
-<span class='pill'>Step 6 λmax</span>
-<span class='pill'>Step 7 SI & CR</span>
-""",
-    unsafe_allow_html=True,
-)
-
-# =========================================================
-# Stop if no upload
-# =========================================================
-if uploaded is None:
-    st.info("Upload CSV dulu (guna sidebar).")
-    st.stop()
-
-# =========================================================
-# Read + compute
-# =========================================================
-try:
-    df_raw = read_pairwise_csv(uploaded.getvalue())
-    df_num = to_numeric_df(df_raw)
-    check_square_and_labels(df_num)
-
-    P = df_num.values.astype(float)
-    names = list(df_num.index)
-    m = P.shape[0]
-
-    recip_ok, recip_err = check_reciprocal(P)
-
-    # Step 2
-    Pi = step2_row_product(P)
-
-    # Step 3
-    GM = step3_gm(Pi, m)
-
-    # Step 4
-    w = step4_weights(GM)
-
-    # Step 5
-    mult_table, Pw = step5_full_multiply(P, w)
-
-    # Step 6
-    lam, lam_max = step6_lambda(Pw, w)
-
-    # Step 7
-    SI, ri, CR = step7_consistency(lam_max, m)
-
-except Exception as e:
-    st.error(f"Error: {e}")
-    st.stop()
-
-# =========================================================
-# Layout: Tabs (AHP / Export)
-# =========================================================
-tab1, tab2 = st.tabs(["AHP (Section 3)", "Export"])
-
-with tab1:
-    left, right = st.columns([1, 2], gap="large")
-
-    # ---------------- LEFT: summary cards + pastel bar ----------------
-    with left:
-        st.markdown("<div class='card-dark'>", unsafe_allow_html=True)
-        st.markdown("<div class='section-title'>Step 1: Pairwise Matrix</div>", unsafe_allow_html=True)
-        st.markdown("<div class='hint'>Raw + numeric display. Reciprocal check included.</div>", unsafe_allow_html=True)
-        st.markdown(f"<div class='hint'>m = <b>{m}</b></div>", unsafe_allow_html=True)
-
-        if list(df_num.index) != list(df_num.columns):
-            st.warning("Row labels != Column labels (recommended to match, but calculation continues).")
-
-        if recip_ok:
-            st.success("Reciprocal OK (pij*pji≈1, diag≈1)")
-        else:
-            st.warning(f"Reciprocal not perfect (max error={recip_err:.2e})")
-        st.markdown("</div>", unsafe_allow_html=True)
-
-        st.markdown("<div class='card-dark'>", unsafe_allow_html=True)
-        st.markdown("<div class='section-title'>Step 4: Weights (ω) — Pastel Bar</div>", unsafe_allow_html=True)
-        st.markdown("<div class='hint'>Graph dibuat guna SVG (tak perlukan matplotlib).</div>", unsafe_allow_html=True)
-        render_pastel_bar_svg(names, w, height=320)
-        st.markdown("</div>", unsafe_allow_html=True)
-
-        st.markdown("<div class='card-dark'>", unsafe_allow_html=True)
-        st.markdown("<div class='section-title'>Step 7: Consistency</div>", unsafe_allow_html=True)
-        ok = CR <= 0.10
-        st.markdown(
-            f"""
-<div class="hint">
-<b>SI</b> = (λmax − m)/(m − 1) = <b>{SI:.9f}</b><br/>
-<b>RI</b> = <b>{ri:.4f}</b><br/>
-<b>CR</b> = SI/RI = <b>{CR:.9f}</b>
-&nbsp;→&nbsp; {"<span class='ok'>ACCEPTABLE (≤ 0.10)</span>" if ok else "<span class='bad'>NOT OK (> 0.10)</span>"}
-</div>
-""",
-            unsafe_allow_html=True,
-        )
-        st.markdown("</div>", unsafe_allow_html=True)
-
-    # ---------------- RIGHT: full step-by-step (UNCHANGED) ----------------
-    with right:
-        st.markdown("<div class='card-light'>", unsafe_allow_html=True)
-        st.markdown("<div class='section-title'>Step 1 — Pairwise comparison matrix P (raw & numeric)</div>", unsafe_allow_html=True)
-
-        c1, c2 = st.columns([1, 1], gap="large")
-        with c1:
-            st.markdown("**Step 1A: Raw CSV values**")
-            st.dataframe(df_raw, use_container_width=True)
-
-        with c2:
-            st.markdown("**Step 1B: Numeric P (float)**")
-            st.dataframe(df_num.style.format("{:.6g}"), use_container_width=True)
-
-        st.markdown("</div>", unsafe_allow_html=True)
-
-        st.markdown("<div class='card-light'>", unsafe_allow_html=True)
-        st.markdown("<div class='section-title'>Step 2 — Row products  Πᵢ = ∏ⱼ pᵢⱼ</div>", unsafe_allow_html=True)
-        df_step2 = pd.DataFrame({"Π_i": Pi}, index=names)
-        st.dataframe(df_step2.style.format("{:.9f}"), use_container_width=True)
-        st.markdown("</div>", unsafe_allow_html=True)
-
-        st.markdown("<div class='card-light'>", unsafe_allow_html=True)
-        st.markdown("<div class='section-title'>Step 3 — Geometric mean  GMᵢ = (Πᵢ)^(1/m)</div>", unsafe_allow_html=True)
-        df_step3 = pd.DataFrame({"GM_i": GM}, index=names)
-        st.dataframe(df_step3.style.format("{:.9f}"), use_container_width=True)
-        st.markdown("</div>", unsafe_allow_html=True)
-
-        st.markdown("<div class='card-light'>", unsafe_allow_html=True)
-        st.markdown("<div class='section-title'>Step 4 — Weights  ωᵢ = GMᵢ / ΣGM</div>", unsafe_allow_html=True)
-        sumGM = float(np.sum(GM))
-        df_step4 = pd.DataFrame({"GM_i": GM, "ΣGM": [sumGM]*m, "ω_i": w}, index=names)
-        st.dataframe(
-            df_step4.style.format({"GM_i": "{:.9f}", "ΣGM": "{:.9f}", "ω_i": "{:.9f}"}),
-            use_container_width=True
-        )
-        st.write(f"Check: Σω = **{float(np.sum(w)):.9f}** (must be 1.000000000)")
-        st.markdown("</div>", unsafe_allow_html=True)
-
-        st.markdown("<div class='card-light'>", unsafe_allow_html=True)
-        st.markdown("<div class='section-title'>Step 5 — Matrix multiplication: (pᵢⱼ × ωⱼ) then row-sum ⇒ (Pω)ᵢ</div>", unsafe_allow_html=True)
-        st.caption("Table below shows each cell: pᵢⱼ × ωⱼ (column j scaled by ωⱼ). Then sum across row i gives (Pω)ᵢ.")
-        df_mult = pd.DataFrame(mult_table, index=names, columns=names)
-        st.dataframe(df_mult.style.format("{:.9f}"), use_container_width=True)
-        df_Pw = pd.DataFrame({"(Pω)_i (row-sum)": Pw}, index=names)
-        st.dataframe(df_Pw.style.format("{:.9f}"), use_container_width=True)
-        st.markdown("</div>", unsafe_allow_html=True)
-
-        st.markdown("<div class='card-light'>", unsafe_allow_html=True)
-        st.markdown("<div class='section-title'>Step 6 — λᵢ = (Pω)ᵢ / ωᵢ ,  λmax = average(λᵢ)</div>", unsafe_allow_html=True)
-        df_step6 = pd.DataFrame({"ω_i": w, "(Pω)_i": Pw, "λ_i": lam}, index=names)
-        st.dataframe(
-            df_step6.style.format({"ω_i": "{:.9f}", "(Pω)_i": "{:.9f}", "λ_i": "{:.9f}"}),
-            use_container_width=True
-        )
-        st.write(f"**λmax = {lam_max:.9f}**")
-        st.markdown("</div>", unsafe_allow_html=True)
-
-        st.markdown("<div class='card-light'>", unsafe_allow_html=True)
-        st.markdown("<div class='section-title'>Step 7 — Consistency: SI and CR</div>", unsafe_allow_html=True)
-        ok = CR <= 0.10
-        st.markdown(
-            f"""
-<div>
-  <div><b>SI</b> = (λmax − m)/(m − 1) = <b>{SI:.9f}</b></div>
-  <div><b>RI</b> = <b>{ri:.4f}</b></div>
-  <div><b>CR</b> = SI/RI = <b>{CR:.9f}</b>
-    &nbsp;→&nbsp; {"<span class='ok'>ACCEPTABLE (≤ 0.10)</span>" if ok else "<span class='bad'>NOT OK (> 0.10)</span>"}
-  </div>
-</div>
-""",
-            unsafe_allow_html=True,
-        )
-        st.markdown("</div>", unsafe_allow_html=True)
-
-with tab2:
-    st.markdown("<div class='card-dark'>", unsafe_allow_html=True)
-    st.markdown("<div class='section-title'>Download</div>", unsafe_allow_html=True)
-    st.markdown("<div class='hint'>Summary results CSV (Π, GM, ω, Pω, λ).</div>", unsafe_allow_html=True)
-
-    export = pd.DataFrame(
-        {"Π_i": Pi, "GM_i": GM, "ω_i": w, "(Pω)_i": Pw, "λ_i": lam},
-        index=names
-    )
-    st.download_button(
-        "⬇️ Download summary results CSV",
-        data=export.to_csv(index=True).encode("utf-8"),
-        file_name="ahp_section3_results.csv",
-        mime="text/csv",
-        use_container_width=True,
-    )
-    st.markdown("</div>", unsafe_allow_html=True)
+components.html(html, height=4200, scrolling=True)
