@@ -5,7 +5,7 @@ import io
 import numpy as np
 import pandas as pd
 import streamlit as st
-import matplotlib.pyplot as plt
+import streamlit.components.v1 as components
 
 # =========================================================
 # Page config
@@ -16,9 +16,12 @@ st.set_page_config(
 )
 
 # =========================================================
-# Theme + layout styling (match the SYAI-Rank vibe)
+# Theme (Dark/Light) + Styling (SYAI-Rank vibe)
 # =========================================================
-THEME = st.session_state.get("theme_mode", "Dark")
+if "theme_mode" not in st.session_state:
+    st.session_state["theme_mode"] = "Dark"
+
+THEME = st.session_state["theme_mode"]
 
 st.markdown(
     f"""
@@ -44,7 +47,6 @@ st.markdown(
     --muted-light: rgba(0,0,0,.65);
   }}
 
-  /* Background */
   .stApp {{
     background: linear-gradient(180deg,
       {"#0b0b0f 0%, #0b0b0f 35%, #ffe4e6 120%" if THEME=="Dark"
@@ -52,13 +54,11 @@ st.markdown(
     ) !important;
   }}
 
-  /* Sidebar */
   [data-testid="stSidebar"] {{
     background: rgba(255, 228, 230, 0.08) !important;
     backdrop-filter: blur(6px);
   }}
 
-  /* Header title */
   .app-title {{
     font-weight: 900;
     font-size: 30px;
@@ -67,7 +67,6 @@ st.markdown(
     color: {"#fce7f3" if THEME=="Dark" else "#111"};
   }}
 
-  /* Pill buttons (visual only) */
   .pill {{
     display:inline-flex;
     align-items:center;
@@ -83,7 +82,6 @@ st.markdown(
     margin-bottom: 8px;
   }}
 
-  /* Cards */
   .card-dark {{
     border-radius: 16px;
     padding: 16px;
@@ -115,17 +113,14 @@ st.markdown(
     color: {"var(--muted-dark)" if THEME=="Dark" else "var(--muted-light)"};
   }}
 
-  /* Make dataframe headers nicer in dark mode */
+  .ok {{ color:#16a34a; font-weight: 900; }}
+  .bad {{ color:#dc2626; font-weight: 900; }}
+
   div[data-testid="stDataFrame"] {{
     border-radius: 12px;
     overflow: hidden;
   }}
 
-  /* Small success/warn badge */
-  .ok {{ color:#16a34a; font-weight: 900; }}
-  .bad {{ color:#dc2626; font-weight: 900; }}
-
-  /* Tabs: slight rounding */
   button[data-baseweb="tab"] {{
     border-radius: 12px !important;
     padding-top: 10px !important;
@@ -149,7 +144,6 @@ def RI(m: int) -> float:
         return RI_TABLE[m]
     if m <= 2:
         return 0.0
-    # common approximation if m>15
     return 1.98 * (m - 2) / m
 
 # =========================================================
@@ -166,13 +160,9 @@ B7,1,1,1,3,1,1,1
 """
 
 # =========================================================
-# Helpers (unchanged logic)
+# Helpers (UNCHANGED)
 # =========================================================
 def parse_ratio(x) -> float:
-    """
-    Accept: 3, 0.5, '1/3', ' 2 / 5 '
-    Return float > 0.
-    """
     if pd.isna(x):
         raise ValueError("Empty cell detected.")
     s = str(x).strip()
@@ -197,10 +187,6 @@ def parse_ratio(x) -> float:
     return float(v)
 
 def read_pairwise_csv(uploaded_bytes: bytes) -> pd.DataFrame:
-    """
-    Read square matrix with row labels in first column.
-    Accept separators: comma, tab, semicolon.
-    """
     text = uploaded_bytes.decode("utf-8", errors="ignore")
     for sep in [",", "\t", ";"]:
         try:
@@ -234,26 +220,20 @@ def check_reciprocal(P: np.ndarray) -> tuple[bool, float]:
     mx = float(max(errs)) if errs else 0.0
     return (mx <= 1e-6), mx
 
-# ---------------- Paper Section 3 steps ----------------
+# ---------------- Paper Section 3 steps (UNCHANGED) ----------------
 def step2_row_product(P: np.ndarray) -> np.ndarray:
-    # Π_i = ∏_j p_ij
     return np.prod(P, axis=1)
 
 def step3_gm(Pi: np.ndarray, m: int) -> np.ndarray:
-    # GM_i = (Π_i)^(1/m)
     return Pi ** (1.0 / m)
 
 def step4_weights(GM: np.ndarray) -> np.ndarray:
-    # ω_i = GM_i / Σ GM
     s = float(np.sum(GM))
     if s == 0:
         raise ValueError("Sum(GM) is zero.")
     return GM / s
 
 def step5_full_multiply(P: np.ndarray, w: np.ndarray) -> tuple[np.ndarray, np.ndarray]:
-    """
-    Build full table of p_ij * w_j, then row-sum gives (Pω)_i.
-    """
     M = P * w.reshape(1, -1)
     Pw = np.sum(M, axis=1)
     return M, Pw
@@ -272,12 +252,92 @@ def step7_consistency(lam_max: float, m: int) -> tuple[float, float, float]:
     return float(SI), float(ri), float(CR)
 
 # =========================================================
-# Sidebar controls (styled like your SYAI app controls)
+# SVG Pastel Bar Chart (NO matplotlib)
+# =========================================================
+PASTELS = [
+    "#a5b4fc", "#f9a8d4", "#bae6fd", "#bbf7d0", "#fde68a",
+    "#c7d2fe", "#fecdd3", "#fbcfe8", "#bfdbfe", "#d1fae5"
+]
+
+def render_pastel_bar_svg(labels: list[str], values: np.ndarray, height: int = 320) -> None:
+    vals = [float(v) for v in values.tolist()]
+    n = len(vals)
+    if n == 0:
+        st.info("No weights to plot.")
+        return
+
+    vmax = max(vals) if max(vals) > 0 else 1.0
+
+    # SVG dimensions (responsive)
+    svg_w = 900
+    svg_h = 360
+    padL, padR, padT, padB = 60, 20, 20, 70
+    plotW = svg_w - padL - padR
+    plotH = svg_h - padT - padB
+    cell = plotW / n
+    barW = cell * 0.75
+
+    # build bars + labels
+    bars = []
+    ticks = []
+    # y grid + ticks (0..5)
+    for t in range(6):
+        yv = vmax * t / 5.0
+        y = padT + plotH - (plotH * (yv / vmax))
+        ticks.append(
+            f"""
+            <line x1="{padL}" y1="{y:.2f}" x2="{svg_w-padR}" y2="{y:.2f}"
+                  stroke="#000" stroke-dasharray="3 3" opacity="0.25"/>
+            <text x="{padL-10}" y="{y+4:.2f}" font-size="12" text-anchor="end" fill="#000">{yv:.3f}</text>
+            """
+        )
+
+    for i, (lab, v) in enumerate(zip(labels, vals)):
+        h = plotH * (v / vmax)
+        x = padL + i * cell + (cell - barW) / 2
+        y = padT + (plotH - h)
+        color = PASTELS[i % len(PASTELS)]
+        bars.append(
+            f"""
+            <g>
+              <rect x="{x:.2f}" y="{y:.2f}" width="{barW:.2f}" height="{h:.2f}"
+                    rx="8" ry="8"
+                    fill="{color}">
+                <title>{lab}: {v:.9f}</title>
+              </rect>
+              <text x="{x + barW/2:.2f}" y="{svg_h-18}" font-size="12" text-anchor="middle" fill="#000">
+                {lab}
+              </text>
+            </g>
+            """
+        )
+
+    # axes
+    axes = f"""
+      <line x1="{padL}" y1="{padT}" x2="{padL}" y2="{svg_h-padB}" stroke="#000"/>
+      <line x1="{padL}" y1="{svg_h-padB}" x2="{svg_w-padR}" y2="{svg_h-padB}" stroke="#000"/>
+      <text x="{padL}" y="{padT-4}" font-size="12" fill="#000">ω (weights)</text>
+    """
+
+    html = f"""
+    <div style="width:100%; border:1px dashed #9ca3af; border-radius:12px; padding:10px; background:transparent;">
+      <svg width="100%" height="{height}" viewBox="0 0 {svg_w} {svg_h}" preserveAspectRatio="xMidYMid meet">
+        {axes}
+        {''.join(ticks)}
+        {''.join(bars)}
+      </svg>
+      <div style="font-size:12px; opacity:.75; margin-top:6px;">Hover bar untuk nilai ω.</div>
+    </div>
+    """
+    components.html(html, height=height + 60, scrolling=False)
+
+# =========================================================
+# Sidebar controls
 # =========================================================
 with st.sidebar:
     st.markdown("### Theme")
-    theme_toggle = st.toggle("Light mode", value=(THEME == "Light"))
-    st.session_state["theme_mode"] = "Light" if theme_toggle else "Dark"
+    light_mode = st.toggle("Light mode", value=(st.session_state["theme_mode"] == "Light"))
+    st.session_state["theme_mode"] = "Light" if light_mode else "Dark"
 
     st.markdown("---")
     st.markdown("### Upload Pairwise Matrix CSV")
@@ -352,21 +412,23 @@ except Exception as e:
     st.stop()
 
 # =========================================================
-# Main layout (SYAI-like: left inputs / right outputs)
+# Layout: Tabs (AHP / Export)
 # =========================================================
 tab1, tab2 = st.tabs(["AHP (Section 3)", "Export"])
 
 with tab1:
     left, right = st.columns([1, 2], gap="large")
 
-    # ---------------- LEFT: Steps summary cards ----------------
+    # ---------------- LEFT: summary cards + pastel bar ----------------
     with left:
         st.markdown("<div class='card-dark'>", unsafe_allow_html=True)
         st.markdown("<div class='section-title'>Step 1: Pairwise Matrix</div>", unsafe_allow_html=True)
         st.markdown("<div class='hint'>Raw + numeric display. Reciprocal check included.</div>", unsafe_allow_html=True)
         st.markdown(f"<div class='hint'>m = <b>{m}</b></div>", unsafe_allow_html=True)
+
         if list(df_num.index) != list(df_num.columns):
             st.warning("Row labels != Column labels (recommended to match, but calculation continues).")
+
         if recip_ok:
             st.success("Reciprocal OK (pij*pji≈1, diag≈1)")
         else:
@@ -374,21 +436,9 @@ with tab1:
         st.markdown("</div>", unsafe_allow_html=True)
 
         st.markdown("<div class='card-dark'>", unsafe_allow_html=True)
-        st.markdown("<div class='section-title'>Step 4: Weights (ω)</div>", unsafe_allow_html=True)
-        st.markdown("<div class='hint'>Pastel bar chart for ω (as requested).</div>", unsafe_allow_html=True)
-
-        # Pastel bar chart
-        pastel = ["#a5b4fc", "#f9a8d4", "#bae6fd", "#bbf7d0", "#fde68a",
-                  "#c7d2fe", "#fecdd3", "#fbcfe8", "#bfdbfe", "#d1fae5"]
-
-        fig, ax = plt.subplots(figsize=(7.2, 3.6))
-        ax.bar(names, w, color=[pastel[i % len(pastel)] for i in range(len(names))])
-        ax.set_ylabel("Weight (ω)")
-        ax.set_xlabel("Criteria")
-        ax.set_ylim(0, max(w) * 1.25 if len(w) else 1)
-        ax.grid(True, axis="y", linestyle="--", alpha=0.35)
-        plt.xticks(rotation=45, ha="right")
-        st.pyplot(fig, clear_figure=True)
+        st.markdown("<div class='section-title'>Step 4: Weights (ω) — Pastel Bar</div>", unsafe_allow_html=True)
+        st.markdown("<div class='hint'>Graph dibuat guna SVG (tak perlukan matplotlib).</div>", unsafe_allow_html=True)
+        render_pastel_bar_svg(names, w, height=320)
         st.markdown("</div>", unsafe_allow_html=True)
 
         st.markdown("<div class='card-dark'>", unsafe_allow_html=True)
@@ -407,7 +457,7 @@ with tab1:
         )
         st.markdown("</div>", unsafe_allow_html=True)
 
-    # ---------------- RIGHT: Full step-by-step (UNCHANGED math) ----------------
+    # ---------------- RIGHT: full step-by-step (UNCHANGED) ----------------
     with right:
         st.markdown("<div class='card-light'>", unsafe_allow_html=True)
         st.markdown("<div class='section-title'>Step 1 — Pairwise comparison matrix P (raw & numeric)</div>", unsafe_allow_html=True)
