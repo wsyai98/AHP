@@ -1,5 +1,4 @@
 # app.py
-import base64
 from pathlib import Path
 import streamlit as st
 import streamlit.components.v1 as components
@@ -19,11 +18,12 @@ B7,1,1,1,3,1,1,1
 """
 
 def escape_for_js_template_literal(s: str) -> str:
+    # safe for JS template literal: `...`
     return s.replace("\\", "\\\\").replace("`", "\\`").replace("${", "\\${")
 
 SAFE_SAMPLE = escape_for_js_template_literal(SAMPLE_CSV)
 
-# ---------- base page background (purple pastel) ----------
+# ---------- Background (purple pastel) ----------
 st.markdown(
     """
 <style>
@@ -42,7 +42,6 @@ st.markdown(
     unsafe_allow_html=True,
 )
 
-# ------------------------------- HTML APP -------------------------------
 html = r"""
 <!doctype html>
 <html lang="en">
@@ -69,8 +68,6 @@ html = r"""
 
     --btn:#a78bfa;
     --btnBd:#8b5cf6;
-
-    --muted: rgba(255,255,255,.78);
   }
   *{box-sizing:border-box}
   html,body{height:100%;margin:0}
@@ -132,7 +129,7 @@ html = r"""
   body.theme-light .section-title{color:#4c1d95}
 
   .hint{font-size:12px;opacity:.86}
-  .mini{font-size:12px;opacity:.9;line-height:1.55}
+  .mini{font-size:12px;opacity:.92;line-height:1.55}
   .pill{
     display:inline-flex;align-items:center;gap:8px;
     padding:6px 10px;border-radius:999px;
@@ -151,7 +148,6 @@ html = r"""
   .subgrid{display:grid;gap:16px;grid-template-columns:1fr}
   @media (min-width:1024px){.subgrid{grid-template-columns:1fr 1fr}}
 
-  /* simple chart */
   .chart{width:100%;height:260px;border-radius:14px;border:1px solid #e5e7eb;background:rgba(255,255,255,.55);overflow:hidden}
   body.theme-dark .chart{background:rgba(255,255,255,.10);border-color:rgba(226,232,240,.25)}
   #tt{position:fixed;display:none;pointer-events:none;background:#fff;color:#111;
@@ -309,8 +305,7 @@ html = r"""
       if(isFinite(num) && isFinite(den) && den !== 0) return num/den;
       return NaN;
     }
-    const v = parseFloat(s);
-    return v;
+    return parseFloat(s);
   }
 
   function renderTable(tableId, cols, rows){
@@ -319,18 +314,19 @@ html = r"""
     const trh=document.createElement("tr");
     cols.forEach(c=>{ const th=document.createElement("th"); th.textContent=c; trh.appendChild(th); });
     thead.appendChild(trh); tb.appendChild(thead);
+
     const tbody=document.createElement("tbody");
     rows.forEach(r=>{
       const tr=document.createElement("tr");
-      cols.forEach((_,ci)=>{ const td=document.createElement("td"); td.innerHTML = r[ci]; tr.appendChild(td); });
+      for(let ci=0; ci<cols.length; ci++){
+        const td=document.createElement("td");
+        td.innerHTML = (r[ci] ?? "");
+        tr.appendChild(td);
+      }
       tbody.appendChild(tr);
     });
     tb.appendChild(tbody);
   }
-
-  // core state
-  let labels = [];
-  let P = [];
 
   function checkReciprocal(P){
     const m=P.length;
@@ -344,54 +340,51 @@ html = r"""
     return maxErr;
   }
 
-  function matVec(A, x){
-    const m=A.length;
-    const y=new Array(m).fill(0);
-    for(let i=0;i<m;i++){
-      let s=0;
-      for(let j=0;j<m;j++) s += A[i][j]*x[j];
-      y[i]=s;
-    }
-    return y;
-  }
+  // state
+  let labels = [];
+  let P = [];
 
   function initAll(csvText){
-    const arr=parseCSVText(csvText);
+    const arr = parseCSVText(csvText);
     if(!arr.length) return;
 
-    // Expect first row: header, first cell label col name, then labels
-    const header = arr[0].map(x=> String(x??"").trim());
+    // --- RAW preview (fix)
+    const rawCols = arr[0].map(x=> String(x??"").trim());
+    const rawRows = arr.slice(1).map(r => {
+      const rr = r.slice(0, rawCols.length).map(x=> String(x??""));
+      while(rr.length < rawCols.length) rr.push("");
+      return rr;
+    });
+    renderTable("tblRaw", rawCols, rawRows.slice(0, 12));
+    show($("cardPraw"), true);
+
+    // --- Expect pairwise: first row header, first col label col name, then criteria labels
+    const header = rawCols;
     labels = header.slice(1);
     const m = labels.length;
 
-    // raw preview (first 12 rows)
-    const rawPreview = arr.slice(0, Math.min(arr.length, 12)).map(r=> r.map(x=> String(x??"")));
-    renderTable("tblRaw", header, rawPreview.slice(1).map(r=> r)); // render with header
-    // The above uses header; but we want include header row? We'll show as standard table:
-    // We'll re-render properly: cols = header, rows = arr.slice(1)
-    renderTable("tblRaw", header, arr.slice(1, Math.min(arr.length, 12)).map(r=> r.map(x=> String(x??""))));
-    show($("cardPraw"), true);
-
-    // build numeric P from rows
-    const rows = arr.slice(1).filter(r=> r.length >= m+1);
-    if(rows.length !== m){
-      alert("Matrix must be square m×m (rows = cols). Check CSV.");
+    if(m < 2){
+      alert("Need at least 2 criteria (m ≥ 2).");
       return;
     }
 
+    const dataRows = arr.slice(1).filter(r => r.length >= m+1);
+    if(dataRows.length !== m){
+      alert("Matrix must be square m×m. Rows must equal columns.");
+      return;
+    }
+
+    // Build numeric P
     P = Array.from({length:m}, ()=> Array.from({length:m}, ()=> 1));
     for(let i=0;i<m;i++){
-      const rowLabel = String(rows[i][0]??"").trim();
       for(let j=0;j<m;j++){
-        const v = parsePositiveNumberOrFraction(rows[i][j+1]);
+        const v = parsePositiveNumberOrFraction(dataRows[i][j+1]);
         if(!isFinite(v) || v<=0){
-          alert("Invalid value detected. Ensure all values are positive numbers or fractions (e.g., 1/3).");
+          alert("Invalid value. Use positive numbers or fractions like 1/3.");
           return;
         }
-        P[i][j]=v;
+        P[i][j] = v;
       }
-      // (optional) ignore mismatch of row labels, but keep labels from header
-      (void)rowLabel;
     }
 
     // render numeric P
@@ -410,7 +403,6 @@ html = r"""
     else meta.push(`<span class="bad">reciprocal not perfect</span> (max err ≈ ${recipErr.toExponential(2)})`);
     $("metaP").innerHTML = meta.join(" &nbsp;•&nbsp; ");
 
-    // compute steps
     computeAndRender();
     show($("cardSteps"), true);
   }
@@ -433,7 +425,7 @@ html = r"""
     const sumGM = GM.reduce((s,v)=> s+v, 0) || 1;
     const w = GM.map(v => v/sumGM);
 
-    // Step 5: mult table pij * wj and row sums
+    // Step 5: pij * wj and row sums
     const Mul = Array.from({length:m}, ()=> Array.from({length:m}, ()=> 0));
     const Pw = new Array(m).fill(0);
     for(let i=0;i<m;i++){
@@ -454,40 +446,40 @@ html = r"""
     const ri = RI(m);
     const CR = (ri===0) ? 0 : (SI/ri);
 
-    // Render Step 2
+    // Step 2
     renderTable(
       "tblPi",
       ["Criterion","Πᵢ"],
       labels.map((c,i)=> [c, Pi[i].toPrecision(10)])
     );
 
-    // Render Step 3
+    // Step 3
     renderTable(
       "tblGM",
       ["Criterion","GMᵢ"],
       labels.map((c,i)=> [c, GM[i].toPrecision(10)])
     );
 
-    // Render Step 4
+    // Step 4
     renderTable(
       "tblW",
       ["Criterion","GMᵢ","ωᵢ"],
       labels.map((c,i)=> [c, GM[i].toPrecision(10), w[i].toFixed(9)])
     );
 
-    // Step 5: Mul table
+    // Step 5 (Mul)
     const mulCols = [" "].concat(labels);
     const mulRows = labels.map((c,i)=> [c].concat(Mul[i].map(v=> v.toFixed(9))));
     renderTable("tblMul", mulCols, mulRows);
 
-    // Step 5: Pw
+    // Step 5 (Pw)
     renderTable(
       "tblPw",
       ["Criterion","(Pω)ᵢ (row-sum)"],
       labels.map((c,i)=> [c, Pw[i].toFixed(9)])
     );
 
-    // Step 6: lambdas table
+    // Step 6
     renderTable(
       "tblLam",
       ["Criterion","ωᵢ","(Pω)ᵢ","λᵢ"],
@@ -495,7 +487,7 @@ html = r"""
       .concat([["","", "<b>λmax</b>", `<b>${lamMax.toFixed(9)}</b>`]])
     );
 
-    // Step 7: consistency box
+    // Step 7
     const ok = CR <= 0.10;
     $("consBox").innerHTML = `
       <div>SI = (λmax − m)/(m − 1) = <b>${SI.toFixed(9)}</b></div>
@@ -508,14 +500,7 @@ html = r"""
     // download results csv
     const outRows = [["Criterion","Pi","GM","w","Pw","lambda"]];
     for(let i=0;i<m;i++){
-      outRows.push([
-        labels[i],
-        String(Pi[i]),
-        String(GM[i]),
-        String(w[i]),
-        String(Pw[i]),
-        String(lam[i]),
-      ]);
+      outRows.push([labels[i], String(Pi[i]), String(GM[i]), String(w[i]), String(Pw[i]), String(lam[i])]);
     }
     const csv = outRows.map(r=> r.map(x=>{
       const s=String(x??"");
@@ -525,7 +510,7 @@ html = r"""
     $("downloadOut").href = "data:text/csv;charset=utf-8," + encodeURIComponent(csv);
     $("downloadOut").download = "ahp_section3_results.csv";
 
-    // draw weight bar (pastel)
+    // weight bar
     drawWeightBar("wbar", labels, w);
   }
 
@@ -586,8 +571,6 @@ html = r"""
       r.setAttribute("rx","10");
       r.setAttribute("fill", PASTELS[i%PASTELS.length]);
       r.setAttribute("opacity","0.95");
-      r.addEventListener("mousemove",(ev)=> showTT(ev.clientX, ev.clientY, `<b>${labs[i]}</b><br/>ω = ${v.toFixed(9)}`));
-      r.addEventListener("mouseleave", hideTT);
       svg.appendChild(r);
 
       const lbl=document.createElementNS("http://www.w3.org/2000/svg","text");
@@ -610,7 +593,7 @@ html = r"""
     r.readAsText(f);
   };
 
-  // preload sample once
+  // preload sample
   initAll(SAMPLE_TEXT);
 
 })();
@@ -620,5 +603,4 @@ html = r"""
 """
 
 html = html.replace("__INJECT_SAMPLE_CSV__", SAFE_SAMPLE)
-
 components.html(html, height=4300, scrolling=True)
