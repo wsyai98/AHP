@@ -1,546 +1,257 @@
 # app.py
-import base64
-from pathlib import Path
 import streamlit as st
 import streamlit.components.v1 as components
 
-st.set_page_config(page_title="AHP-Rank", layout="wide")
-APP_DIR = Path(__file__).resolve().parent
+st.set_page_config(page_title="AHP Rank", layout="wide")
 
-# ---------- Single source of truth for SAMPLE (PAIRWISE) CSV ----------
-def load_sample_csv_text() -> str:
-    # If you already have a sample file, uncomment and set path
-    # p = Path("/mnt/data/sample_pairwise.csv")
-    # if p.exists():
-    #     for enc in ("utf-8", "latin-1"):
-    #         try:
-    #             return p.read_text(encoding=enc)
-    #         except Exception:
-    #             pass
+SAMPLE_CSV = """
+Criteria,C1,C2,C3
+C1,1,1/3,3
+C2,3,1,5
+C3,1/3,1/5,1
+"""
 
-    # Fallback: AHP pairwise sample (7x7) using fractions
-    return (
-        "Criteria,B1,B2,B3,B4,B5,B6,B7\n"
-        "B1,1,1/2,1/3,1/3,1/3,1/5,1\n"
-        "B2,2,1,1/3,1,1/3,1/5,1\n"
-        "B3,3,3,1,3,1,1,1\n"
-        "B4,3,1,1/3,1,1/3,1/3,1/3\n"
-        "B5,3,3,1,3,1,1,1\n"
-        "B6,5,5,1,3,1,1,1\n"
-        "B7,1,1,1,3,1,1,1\n"
-    )
-
-SAMPLE_CSV = load_sample_csv_text()
-
-# ------------------------------- HTML APP -------------------------------
-html = r"""
+html = """
 <!doctype html>
-<html lang="en">
+<html>
 <head>
-<meta charset="utf-8"/>
-<meta name="viewport" content="width=device-width,initial-scale=1"/>
-<title>AHP-Rank</title>
+<meta charset="utf-8">
+<title>AHP Rank</title>
+
 <style>
-  :root{
-    --bg-dark:#0b0b0f;
-    --grad-light:#e9d5ff; /* purple blush */
-    --card-dark:#0f1115cc;
-    --card-light:#ffffffcc;
+body{margin:0;font-family:Arial}
+body.dark{background:#0b0b0f;color:#e5e7eb}
+body.light{background:#f8fafc;color:#111}
 
-    --text-light:#f5f5f5;
+.container{max-width:1200px;margin:20px auto;padding:10px}
 
-    /* PURPLE PASTEL THEME */
-    --pri:#a78bfa;        /* purple */
-    --pri-700:#7c3aed;    /* deeper purple */
-    --pri-soft:#ede9fe;   /* very light purple */
-    --border-dark:#262b35;
-    --border-light:#f1f5f9;
-  }
+.header{display:flex;justify-content:space-between;align-items:center}
+.title{font-size:26px;font-weight:900;color:#a78bfa}
 
-  *{box-sizing:border-box}
-  html,body{height:100%;margin:0}
-  body{
-    font-family:ui-sans-serif,system-ui,-apple-system,"Segoe UI",Roboto,Arial;
-    color:var(--text-light);
-    background:linear-gradient(180deg,#0b0b0f 0%,#0b0b0f 35%,var(--grad-light) 120%);
-  }
+.btn{
+  padding:10px 14px;border-radius:10px;
+  background:#a78bfa;border:1px solid #7c3aed;
+  font-weight:800;cursor:pointer;
+}
 
-  .container{max-width:1200px;margin:24px auto;padding:0 16px}
-  .header{display:flex;align-items:center;justify-content:space-between;margin-bottom:12px}
-  .title{font-weight:800;font-size:28px;color:#f3e8ff} /* purple-ish white */
-  .row{display:flex;gap:10px;align-items:center;flex-wrap:wrap}
+.toggle{
+  padding:10px 14px;border-radius:10px;
+  background:transparent;border:1px solid #999;
+  font-weight:800;cursor:pointer;
+}
 
-  .btn{
-    display:inline-flex;align-items:center;gap:8px;
-    padding:10px 14px;border-radius:12px;
-    border:1px solid var(--pri-700);
-    background:var(--pri);
-    color:#111; /* readable on pastel */
-    cursor:pointer;
-    font-weight:700;
-    text-decoration:none;
-  }
-  .btn:hover{filter:brightness(0.96)}
+.grid{display:grid;grid-template-columns:1fr 1fr;gap:16px}
 
-  .tabs{display:flex;gap:8px;margin:12px 0;position:relative;z-index:10}
-  .tab{
-    padding:10px 14px;border-radius:12px;
-    border:1px solid #333;background:#202329;color:#ddd;cursor:pointer
-  }
-  .tab.active{background:var(--pri);border-color:var(--pri-700);color:#111;font-weight:800}
+.card{
+  border:1px solid #ccc;border-radius:14px;
+  padding:14px;
+}
 
-  .grid{display:grid;gap:16px;grid-template-columns:1fr}
-  @media (min-width:1024px){.grid{grid-template-columns:1fr 2fr}}
+.dark .card{background:#0f1115cc}
+.light .card{background:#ffffffcc}
 
-  .card{
-    border-radius:16px;padding:18px;
-    border:1px solid var(--border-light);
-    backdrop-filter:blur(6px)
-  }
-  .card.dark{background:var(--card-dark);color:#e5e7eb;border-color:var(--border-dark)}
-  .card.light{background:var(--card-light);color:#111;border-color:var(--border-light)}
+.section{font-weight:800;color:#a78bfa;margin-bottom:8px}
 
-  .section-title{font-weight:700;font-size:18px;margin-bottom:12px;color:#e9d5ff}
-  .hint{font-size:12px;opacity:.85}
+.chart{width:100%;height:300px;border:1px dashed #aaa;border-radius:10px}
 
-  .table-wrap{overflow:auto;max-height:360px}
-  table{width:100%;border-collapse:collapse;font-size:14px;color:#111}
-  th,td{text-align:left;padding:8px 10px;border-bottom:1px solid #e5e7eb;white-space:nowrap}
-
-  .chart2{width:100%;height:360px;border:1px dashed #9ca3af;border-radius:12px;background:transparent}
-  .chartTall{width:100%;height:480px;border:1px dashed #9ca3af;border-radius:12px;background:transparent}
-
-  .pill{
-    display:inline-flex;align-items:center;gap:8px;
-    padding:6px 10px;border-radius:999px;
-    border:1px solid rgba(167,139,250,.6);
-    background:rgba(167,139,250,.12);
-    margin:0 6px 6px 0;font-size:12px;color:#fff
-  }
-
-  /* Tooltip */
-  #tt{position:fixed;display:none;pointer-events:none;background:#fff;color:#111;
-      padding:6px 8px;border-radius:8px;font-size:12px;box-shadow:0 12px 24px rgba(0,0,0,.18);border:1px solid #e5e7eb;z-index:9999}
-
-  .ok{color:#16a34a;font-weight:900}
-  .bad{color:#dc2626;font-weight:900}
+table{width:100%;border-collapse:collapse}
+th,td{border-bottom:1px solid #ccc;padding:6px;text-align:center}
 </style>
 </head>
-<body>
+
+<body class="dark">
 <div class="container">
 
-  <div class="header">
-    <div class="title">AHP-Rank</div>
-    <div class="row">
-      <a class="btn" id="downloadSample">⬇️ Download Sample</a>
-      <button class="btn" id="loadSample">📄 Load Sample</button>
+<div class="header">
+  <div class="title">AHP Rank</div>
+  <div>
+    <button class="btn" id="loadSample">Load Sample</button>
+    <button class="toggle" id="themeBtn">🌙 Dark</button>
+  </div>
+</div>
+
+<div class="grid">
+
+  <div>
+    <div class="card">
+      <div class="section">Upload CSV</div>
+      <input type="file" id="csvFile">
+    </div>
+
+    <div class="card">
+      <div class="section">Weights (ω)</div>
+      <svg id="bar" class="chart"></svg>
+    </div>
+
+    <div class="card">
+      <div class="section">λᵢ Line Chart</div>
+      <svg id="line" class="chart"></svg>
     </div>
   </div>
 
-  <div class="tabs">
-    <button type="button" class="tab active" id="tabAHP">AHP Method (Saaty)</button>
-  </div>
-
-  <div class="grid">
-    <!-- LEFT -->
-    <div>
-      <div class="card dark">
-        <div class="section-title">Step 1: Upload Pairwise Matrix (CSV)</div>
-        <label for="csv1" class="btn">📤 Choose CSV</label>
-        <input id="csv1" type="file" accept=".csv" style="display:none"/>
-        <p class="hint">Format: first column = row labels, first row = column labels. Must be square. Values can be <b>1</b>, <b>2</b>, <b>1/3</b>, etc.</p>
-      </div>
-
-      <div id="stat" class="card dark" style="display:none">
-        <div class="section-title">Consistency Summary</div>
-        <div id="statBox" class="hint"></div>
-        <div style="margin-top:10px">
-          <span class="pill">Step 2 Π</span>
-          <span class="pill">Step 3 GM</span>
-          <span class="pill">Step 4 ω</span>
-          <span class="pill">Step 5 P×ω</span>
-          <span class="pill">Step 6 λmax</span>
-          <span class="pill">Step 7 SI & CR</span>
-        </div>
-      </div>
-
-      <div id="wcard" class="card dark" style="display:none">
-        <div class="section-title">Weights (ω) — Bar Chart</div>
-        <div class="chart2"><svg id="barW" width="100%" height="100%"></svg></div>
-        <div class="hint" style="margin-top:8px">Hover bar untuk nilai ω.</div>
-      </div>
-
-      <div id="lcard" class="card dark" style="display:none">
-        <div class="section-title">λᵢ Trend — Line Chart</div>
-        <div class="chart2"><svg id="lineL" width="100%" height="100%"></svg></div>
-        <div class="hint" style="margin-top:8px">Line menunjukkan λᵢ = (Pω)ᵢ / ωᵢ.</div>
-      </div>
+  <div>
+    <div class="card">
+      <div class="section">Pairwise Matrix</div>
+      <table id="tblP"></table>
     </div>
 
-    <!-- RIGHT -->
-    <div>
-      <div id="m1" class="card light" style="display:none">
-        <div class="section-title">Pairwise Matrix P (numeric)</div>
-        <div class="table-wrap"><table id="tblP"></table></div>
-      </div>
+    <div class="card">
+      <div class="section">Weights</div>
+      <table id="tblW"></table>
+    </div>
 
-      <div id="s2" class="card light" style="display:none">
-        <div class="section-title">Step 2: Row Product Πᵢ = ∏ⱼ pᵢⱼ</div>
-        <div class="table-wrap"><table id="tblPi"></table></div>
-      </div>
-
-      <div id="s3" class="card light" style="display:none">
-        <div class="section-title">Step 3: GMᵢ = (Πᵢ)^(1/m)</div>
-        <div class="table-wrap"><table id="tblGM"></table></div>
-      </div>
-
-      <div id="s4" class="card light" style="display:none">
-        <div class="section-title">Step 4: Weights ωᵢ = GMᵢ / ΣGM</div>
-        <div class="table-wrap"><table id="tblW"></table></div>
-      </div>
-
-      <div id="s5" class="card light" style="display:none">
-        <div class="section-title">Step 5: (pᵢⱼ × ωⱼ) and (Pω)ᵢ (row-sum)</div>
-        <div class="table-wrap"><table id="tblMul"></table></div>
-        <div style="margin-top:10px" class="table-wrap"><table id="tblPw"></table></div>
-      </div>
-
-      <div id="s6" class="card light" style="display:none">
-        <div class="section-title">Step 6: λᵢ = (Pω)ᵢ / ωᵢ and λmax</div>
-        <div class="table-wrap"><table id="tblLam"></table></div>
-      </div>
-
-      <div id="s7" class="card light" style="display:none">
-        <div class="section-title">Step 7: SI and CR</div>
-        <div class="table-wrap"><table id="tblCR"></table></div>
-      </div>
+    <div class="card">
+      <div class="section">Consistency</div>
+      <table id="tblC"></table>
     </div>
   </div>
 
 </div>
-
-<!-- tooltip -->
-<div id="tt"></div>
+</div>
 
 <script>
-(function(){
-  const $  = (id)=> document.getElementById(id);
-  const show = (el,on=true)=> el.style.display = on ? "" : "none";
+const SAMPLE = `__CSV__`;
 
-  // purple-ish pastels for bars
-  const PASTELS = ["#a78bfa","#c4b5fd","#ddd6fe","#f5d0fe","#e9d5ff","#c7d2fe","#fbcfe8","#bfdbfe","#d1fae5","#fde68a"];
+let dark=true;
+const body=document.body;
+const themeBtn=document.getElementById("themeBtn");
 
-  // ---------- injected by Python ----------
-  const SAMPLE_TEXT = `__INJECT_SAMPLE_CSV__`;
+themeBtn.onclick=()=>{
+  dark=!dark;
+  body.className = dark?"dark":"light";
+  themeBtn.innerText = dark?"🌙 Dark":"☀️ Light";
+  redraw();
+};
 
-  $("downloadSample").href = "data:text/csv;charset=utf-8,"+encodeURIComponent(SAMPLE_TEXT);
-  $("downloadSample").download = "ahp_pairwise_sample.csv";
-  $("loadSample").onclick = ()=> initAHP(SAMPLE_TEXT);
+function parseCSV(txt){
+  return txt.trim().split("\\n").map(r=>r.split(","));
+}
 
-  // ---------- CSV parser ----------
-  function parseCSVText(text){
-    const rows=[]; let i=0, cur="", inQ=false, row=[];
-    const pushCell=()=>{ row.push(cur); cur=""; };
-    const pushRow =()=>{ rows.push(row); row=[]; };
-    while(i<text.length){
-      const ch=text[i];
-      if(inQ){
-        if(ch==='\"'){ if(text[i+1]==='\"'){ cur+='\"'; i++; } else { inQ=false; } }
-        else cur+=ch;
-      }else{
-        if(ch==='\"') inQ=true;
-        else if(ch===',') pushCell();
-        else if(ch==='\n'){ pushCell(); pushRow(); }
-        else if(ch==='\r'){}
-        else cur+=ch;
-      }
-      i++;
+function parseRatio(v){
+  if(v.includes("/")){
+    let p=v.split("/");
+    return parseFloat(p[0])/parseFloat(p[1]);
+  }
+  return parseFloat(v);
+}
+
+function table(id,head,rows){
+  let h="<tr>"+head.map(x=>"<th>"+x+"</th>").join("")+"</tr>";
+  rows.forEach(r=>{
+    h+="<tr>"+r.map(x=>"<td>"+x+"</td>").join("")+"</tr>";
+  });
+  document.getElementById(id).innerHTML=h;
+}
+
+let labels=[],weights=[],lambdas=[];
+
+function compute(txt){
+  const a=parseCSV(txt);
+  labels=a.slice(1).map(r=>r[0]);
+  const m=labels.length;
+
+  let P=[];
+  for(let i=0;i<m;i++){
+    let row=[];
+    for(let j=0;j<m;j++){
+      row.push(parseRatio(a[i+1][j+1]));
     }
-    pushCell(); if(row.length>1 || row[0] !== "") pushRow();
-    return rows.map(r=> r.map(x=> String(x ?? "").trim()));
+    P.push(row);
   }
 
-  function parseRatio(v){
-    const s = String(v??"").trim();
-    if(!s) return NaN;
-    if(s.includes("/")){
-      const parts = s.split("/");
-      if(parts.length!==2) return NaN;
-      const a = parseFloat(parts[0].trim());
-      const b = parseFloat(parts[1].trim());
-      if(!isFinite(a) || !isFinite(b) || b===0) return NaN;
-      return a/b;
-    }
-    const x = parseFloat(s);
-    return isFinite(x) ? x : NaN;
+  let Pi=P.map(r=>r.reduce((x,y)=>x*y,1));
+  let GM=Pi.map(v=>Math.pow(v,1/m));
+  let s=GM.reduce((a,b)=>a+b,0);
+  weights=GM.map(v=>v/s);
+
+  let Pw=P.map((r,i)=> r.reduce((s,v,j)=>s+v*weights[j],0));
+  lambdas=Pw.map((v,i)=> v/weights[i]);
+  let lamMax=lambdas.reduce((a,b)=>a+b,0)/m;
+
+  let SI=(lamMax-m)/(m-1);
+  let RI={1:0,2:0,3:0.58}[m]||0.58;
+  let CR=SI/RI;
+
+  table("tblP",[" "].concat(labels),
+    labels.map((l,i)=>[l].concat(P[i].map(x=>x.toFixed(3))))
+  );
+
+  table("tblW",["Criteria","ω"],
+    labels.map((l,i)=>[l,weights[i].toFixed(6)])
+  );
+
+  table("tblC",
+    ["λmax","SI","RI","CR","Decision"],
+    [[lamMax.toFixed(4),SI.toFixed(4),RI.toFixed(2),CR.toFixed(4),CR<=0.1?"OK":"NOT OK"]]
+  );
+
+  redraw();
+}
+
+function drawBar(){
+  const svg=document.getElementById("bar");
+  svg.innerHTML="";
+  const W=svg.clientWidth, H=svg.clientHeight;
+  let max=Math.max(...weights);
+  let bw=W/weights.length*0.6;
+
+  weights.forEach((v,i)=>{
+    let h=(v/max)*(H-40);
+    let x=i*(W/weights.length)+(W/weights.length-bw)/2;
+    let y=H-h-20;
+
+    let r=document.createElementNS("http://www.w3.org/2000/svg","rect");
+    r.setAttribute("x",x);r.setAttribute("y",y);
+    r.setAttribute("width",bw);r.setAttribute("height",h);
+    r.setAttribute("fill","#a78bfa");
+    svg.appendChild(r);
+  });
+}
+
+function drawLine(){
+  const svg=document.getElementById("line");
+  svg.innerHTML="";
+  const W=svg.clientWidth, H=svg.clientHeight;
+  let max=Math.max(...lambdas);
+
+  let d="";
+  lambdas.forEach((v,i)=>{
+    let x=i*(W/(lambdas.length-1));
+    let y=H-(v/max)*(H-40)-20;
+    d+=(i==0?"M":"L")+x+" "+y+" ";
+  });
+
+  let p=document.createElementNS("http://www.w3.org/2000/svg","path");
+  p.setAttribute("d",d);
+  p.setAttribute("fill","none");
+  p.setAttribute("stroke", dark?"#fff":"#000");
+  p.setAttribute("stroke-width","3");
+  svg.appendChild(p);
+}
+
+function redraw(){
+  if(weights.length>0){
+    drawBar();
+    drawLine();
   }
+}
 
-  // Saaty RI table
-  const RI_TABLE = {1:0,2:0,3:0.58,4:0.90,5:1.12,6:1.24,7:1.32,8:1.41,9:1.45,10:1.49,11:1.51,12:1.48,13:1.56,14:1.57,15:1.59};
-  function RI(m){
-    if(RI_TABLE[m]!=null) return RI_TABLE[m];
-    if(m<=2) return 0;
-    return 1.98*(m-2)/m;
-  }
+document.getElementById("loadSample").onclick=()=>compute(SAMPLE);
 
-  // ---------- render table ----------
-  function renderTable(tableId, cols, rows){
-    const tb=$(tableId); tb.innerHTML="";
-    const thead=document.createElement("thead");
-    const trh=document.createElement("tr");
-    cols.forEach(c=>{ const th=document.createElement("th"); th.textContent=c; trh.appendChild(th); });
-    thead.appendChild(trh); tb.appendChild(thead);
+document.getElementById("csvFile").addEventListener("change",e=>{
+  const f=e.target.files[0];
+  if(!f) return;
+  const r=new FileReader();
+  r.onload=()=>compute(r.result);
+  r.readAsText(f);
+});
 
-    const tbody=document.createElement("tbody");
-    rows.forEach(r=>{
-      const tr=document.createElement("tr");
-      r.forEach(cell=>{
-        const td=document.createElement("td");
-        td.textContent = cell;
-        tr.appendChild(td);
-      });
-      tbody.appendChild(tr);
-    });
-    tb.appendChild(tbody);
-  }
-
-  // ---------- Tooltip ----------
-  const TT = $("tt");
-  function showTT(x,y,html){ TT.style.display="block"; TT.style.left=(x+12)+"px"; TT.style.top=(y+12)+"px"; TT.innerHTML=html; }
-  function hideTT(){ TT.style.display="none"; }
-
-  // ---------- Charts ----------
-  function drawBar(svgId, data){
-    const svg=$(svgId); while(svg.firstChild) svg.removeChild(svg.firstChild);
-    const W=(svg.getBoundingClientRect().width||800), H=(svg.getBoundingClientRect().height||360);
-    svg.setAttribute("viewBox","0 0 "+W+" "+H);
-    const padL=50,padR=20,padT=18,padB=44;
-    const max=Math.max(...data.map(d=>d.value))||1;
-    const cell=(W-padL-padR)/data.length, barW=cell*0.8;
-
-    const yAxis=document.createElementNS("http://www.w3.org/2000/svg","line");
-    yAxis.setAttribute("x1",padL); yAxis.setAttribute("x2",padL); yAxis.setAttribute("y1",padT); yAxis.setAttribute("y2",H-padB); yAxis.setAttribute("stroke","#000"); svg.appendChild(yAxis);
-    const xAxis=document.createElementNS("http://www.w3.org/2000/svg","line");
-    xAxis.setAttribute("x1",padL); xAxis.setAttribute("x2",W-padR); xAxis.setAttribute("y1",H-padB); xAxis.setAttribute("y2",H-padB); xAxis.setAttribute("stroke","#000"); svg.appendChild(xAxis);
-
-    for(let t=0;t<=5;t++){
-      const val=max*t/5, y=H-padB-(H-padT-padB)*(val/max);
-      const gl=document.createElementNS("http://www.w3.org/2000/svg","line");
-      gl.setAttribute("x1",padL); gl.setAttribute("x2",W-padR); gl.setAttribute("y1",y); gl.setAttribute("y2",y);
-      gl.setAttribute("stroke","#000"); gl.setAttribute("stroke-dasharray","3 3"); svg.appendChild(gl);
-      const tx=document.createElementNS("http://www.w3.org/2000/svg","text");
-      tx.setAttribute("x",padL-10); tx.setAttribute("y",y+4); tx.setAttribute("text-anchor","end");
-      tx.setAttribute("font-size","12"); tx.setAttribute("fill","#000"); tx.textContent=val.toFixed(3); svg.appendChild(tx);
-    }
-
-    data.forEach((d,i)=>{
-      const x=padL+i*cell+(cell-barW)/2, h=(H-padT-padB)*(d.value/max), y=H-padB-h;
-      const r=document.createElementNS("http://www.w3.org/2000/svg","rect");
-      r.setAttribute("x",x); r.setAttribute("y",y); r.setAttribute("width",barW); r.setAttribute("height",h);
-      r.setAttribute("fill", PASTELS[i%PASTELS.length]);
-      r.addEventListener("mousemove",(ev)=> showTT(ev.clientX, ev.clientY, `<b>${d.name}</b><br/>ω = ${d.value.toFixed(6)}`));
-      r.addEventListener("mouseleave", hideTT);
-      svg.appendChild(r);
-
-      const lbl=document.createElementNS("http://www.w3.org/2000/svg","text");
-      lbl.setAttribute("x",x+barW/2); lbl.setAttribute("y",H-12); lbl.setAttribute("text-anchor","middle");
-      lbl.setAttribute("font-size","12"); lbl.setAttribute("fill","#000"); lbl.textContent=d.name; svg.appendChild(lbl);
-    });
-  }
-
-  function drawLine(svgId, data){
-    const svg=$(svgId); while(svg.firstChild) svg.removeChild(svg.firstChild);
-    const W=(svg.getBoundingClientRect().width||800), H=(svg.getBoundingClientRect().height||300);
-    svg.setAttribute("viewBox","0 0 "+W+" "+H);
-    const padL=50,padR=20,padT=14,padB=30;
-
-    const maxY=Math.max(...data.map(d=>d.value))||1;
-    const minX=1, maxX=Math.max(...data.map(d=>d.x))||1;
-
-    const sx=(x)=> padL+(W-padL-padR)*((x-minX)/(maxX-minX||1));
-    const sy=(v)=> H-padB-(H-padT-padB)*(v/maxY);
-
-    const yAxis=document.createElementNS("http://www.w3.org/2000/svg","line");
-    yAxis.setAttribute("x1",padL); yAxis.setAttribute("x2",padL); yAxis.setAttribute("y1",padT); yAxis.setAttribute("y2",H-padB); yAxis.setAttribute("stroke","#000"); svg.appendChild(yAxis);
-    const xAxis=document.createElementNS("http://www.w3.org/2000/svg","line");
-    xAxis.setAttribute("x1",padL); xAxis.setAttribute("x2",W-padR); xAxis.setAttribute("y1",H-padB); xAxis.setAttribute("y2",H-padB); xAxis.setAttribute("stroke","#000"); svg.appendChild(xAxis);
-
-    const p=document.createElementNS("http://www.w3.org/2000/svg","path");
-    let dstr="";
-    data.sort((a,b)=> a.x-b.x).forEach((pt,i)=>{
-      const x=sx(pt.x), y=sy(pt.value);
-      dstr += (i===0? "M":"L")+x+" "+y+" ";
-
-      const c=document.createElementNS("http://www.w3.org/2000/svg","circle");
-      c.setAttribute("cx",x); c.setAttribute("cy",y); c.setAttribute("r","4"); c.setAttribute("fill","#111");
-      c.addEventListener("mousemove",(ev)=> showTT(ev.clientX, ev.clientY, `<b>${pt.name}</b><br/>λᵢ = ${pt.value.toFixed(6)}`));
-      c.addEventListener("mouseleave", hideTT);
-      svg.appendChild(c);
-
-      const tx=document.createElementNS("http://www.w3.org/2000/svg","text");
-      tx.setAttribute("x",x); tx.setAttribute("y",H-10);
-      tx.setAttribute("text-anchor","middle"); tx.setAttribute("font-size","11"); tx.setAttribute("fill","#000");
-      tx.textContent = pt.x; svg.appendChild(tx);
-    });
-    p.setAttribute("d", dstr.trim()); p.setAttribute("fill","none"); p.setAttribute("stroke","#111"); p.setAttribute("stroke-width","2");
-    svg.appendChild(p);
-  }
-
-  // ---------- AHP core ----------
-  function initAHP(txt){
-    const arr=parseCSVText(txt);
-    if(!arr.length) return;
-
-    const header = arr[0];
-    if(header.length<2) return;
-
-    const colLabels = header.slice(1);     // columns after first
-    const rowLabels = arr.slice(1).map(r=> r[0]).filter(x=> x!=="" );
-
-    const m = rowLabels.length;
-    if(m<2){ alert("Need at least 2 criteria."); return; }
-    if(colLabels.length !== m){ alert("Matrix must be square: number of columns must equal number of rows."); return; }
-
-    // Build numeric matrix P
-    const P = [];
-    for(let i=0;i<m;i++){
-      const r = arr[i+1];
-      if(!r || r.length < m+1){ alert("Some rows are incomplete."); return; }
-      const row = [];
-      for(let j=0;j<m;j++){
-        const v = parseRatio(r[j+1]);
-        if(!isFinite(v) || v<=0){ alert(`Invalid value at row ${rowLabels[i]}, col ${colLabels[j]}`); return; }
-        row.push(v);
-      }
-      P.push(row);
-    }
-
-    // Reciprocal check
-    let maxErr = 0;
-    for(let i=0;i<m;i++){
-      maxErr = Math.max(maxErr, Math.abs(P[i][i]-1));
-      for(let j=i+1;j<m;j++){
-        maxErr = Math.max(maxErr, Math.abs(P[i][j]*P[j][i]-1));
-      }
-    }
-
-    // Step 2: Pi
-    const Pi = P.map(row => row.reduce((a,b)=> a*b, 1));
-
-    // Step 3: GM
-    const GM = Pi.map(v => Math.pow(v, 1/m));
-
-    // Step 4: w
-    const sumGM = GM.reduce((a,b)=> a+b, 0) || 1;
-    const w = GM.map(v => v/sumGM);
-
-    // Step 5: multiply table (p_ij * w_j) and Pw
-    const Mul = [];
-    const Pw = [];
-    for(let i=0;i<m;i++){
-      const r = [];
-      let s = 0;
-      for(let j=0;j<m;j++){
-        const x = P[i][j]*w[j];
-        r.push(x);
-        s += x;
-      }
-      Mul.push(r);
-      Pw.push(s);
-    }
-
-    // Step 6: lambda_i and lambda_max
-    const lam = Pw.map((v,i)=> v/(w[i] || 1e-18));
-    const lam_max = lam.reduce((a,b)=> a+b, 0)/m;
-
-    // Step 7: SI and CR
-    const SI = (m<=2) ? 0 : (lam_max - m)/(m-1);
-    const ri = RI(m);
-    const CR = (ri===0) ? 0 : (SI/ri);
-
-    // ---------- Render tables ----------
-    // P table (numeric)
-    const Pcols = [" "].concat(colLabels);
-    const Prows = rowLabels.map((rl,i)=> [rl].concat(P[i].map(x=> x.toFixed(6))) );
-    renderTable("tblP", Pcols, Prows);
-
-    // Π table
-    renderTable("tblPi", ["Criteria","Π_i"], rowLabels.map((rl,i)=> [rl, Pi[i].toFixed(9)]) );
-
-    // GM table
-    renderTable("tblGM", ["Criteria","GM_i"], rowLabels.map((rl,i)=> [rl, GM[i].toFixed(9)]) );
-
-    // W table
-    renderTable("tblW", ["Criteria","GM_i","ΣGM","ω_i"], rowLabels.map((rl,i)=> [rl, GM[i].toFixed(9), sumGM.toFixed(9), w[i].toFixed(9)]) );
-
-    // Mul + Pw
-    const mulCols = [" "].concat(colLabels);
-    const mulRows = rowLabels.map((rl,i)=> [rl].concat(Mul[i].map(x=> x.toFixed(9))) );
-    renderTable("tblMul", mulCols, mulRows);
-    renderTable("tblPw", ["Criteria","(Pω)_i (row-sum)"], rowLabels.map((rl,i)=> [rl, Pw[i].toFixed(9)]) );
-
-    // Lambda
-    renderTable("tblLam", ["Criteria","ω_i","(Pω)_i","λ_i"], rowLabels.map((rl,i)=> [rl, w[i].toFixed(9), Pw[i].toFixed(9), lam[i].toFixed(9)]) );
-
-    // CR table
-    renderTable("tblCR",
-      ["m","λmax","SI","RI","CR","Decision"],
-      [[
-        String(m),
-        lam_max.toFixed(9),
-        SI.toFixed(9),
-        ri.toFixed(4),
-        CR.toFixed(9),
-        (CR<=0.10 ? "ACCEPTABLE (≤0.10)" : "NOT OK (>0.10)")
-      ]]
-    );
-
-    // ---------- Summary box ----------
-    const ok = (CR<=0.10);
-    $("statBox").innerHTML = `
-      <div>Reciprocal check max error: <b>${maxErr.toExponential(2)}</b></div>
-      <div style="margin-top:6px"><b>λmax</b> = ${lam_max.toFixed(9)}</div>
-      <div><b>SI</b> = ${SI.toFixed(9)}</div>
-      <div><b>RI</b> = ${ri.toFixed(4)}</div>
-      <div><b>CR</b> = ${CR.toFixed(9)} &nbsp;→&nbsp; ${ok ? '<span class="ok">ACCEPTABLE</span>' : '<span class="bad">NOT OK</span>'}</div>
-    `;
-
-    // ---------- Charts ----------
-    drawBar("barW", rowLabels.map((name,i)=> ({name, value:w[i]})));
-    drawLine("lineL", rowLabels.map((name,i)=> ({name, x:i+1, value:lam[i]})));
-
-    // ---------- Show sections ----------
-    show($("stat"),true);
-    show($("wcard"),true);
-    show($("lcard"),true);
-    show($("m1"),true);
-    show($("s2"),true);
-    show($("s3"),true);
-    show($("s4"),true);
-    show($("s5"),true);
-    show($("s6"),true);
-    show($("s7"),true);
-  }
-
-  // file upload
-  $("csv1").onchange = (e)=>{
-    const f=e.target.files[0];
-    if(!f) return;
-    const r=new FileReader();
-    r.onload=()=> initAHP(String(r.result));
-    r.readAsText(f);
-  };
-
-  // preload sample
-  initAHP(SAMPLE_TEXT);
-
-})();
+compute(SAMPLE);
 </script>
 </body>
 </html>
 """
 
-# inject sample
-html = html.replace("__INJECT_SAMPLE_CSV__", SAMPLE_CSV.replace("`","\\`"))
+html = html.replace("__CSV__", SAMPLE_CSV.replace("\\","\\\\").replace("`","\\`"))
 
-components.html(html, height=4200, scrolling=True)
+components.html(html, height=2000, scrolling=True)
