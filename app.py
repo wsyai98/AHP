@@ -1,11 +1,9 @@
 # app.py
-import base64
 from pathlib import Path
 import streamlit as st
 import streamlit.components.v1 as components
 
-st.set_page_config(page_title="AHP Step-by-Step (Pastel Purple)", layout="wide")
-APP_DIR = Path(__file__).resolve().parent
+st.set_page_config(page_title="AHP Step-by-Step", layout="wide")
 
 # ---------- Single source of truth for the sample CSV ----------
 def load_sample_csv_text() -> str:
@@ -54,7 +52,6 @@ st.markdown(
     unsafe_allow_html=True,
 )
 
-# ------------------------------- HTML APP -------------------------------
 html = r"""
 <!doctype html>
 <html lang="en">
@@ -103,13 +100,14 @@ html = r"""
   }
 
   .container{max-width:1200px;margin:24px auto;padding:0 16px}
-  .header{display:flex;align-items:center;justify-content:space-between;margin-bottom:12px}
+  .header{display:flex;align-items:center;justify-content:space-between;margin-bottom:12px;gap:12px;flex-wrap:wrap}
   .title{
     font-weight:900;
     font-size:28px;
     letter-spacing:.3px;
     color: var(--lav);
     text-shadow: 0 10px 28px rgba(167,139,250,.22);
+    white-space:nowrap;
   }
   body.theme-light .title{color:#111;text-shadow:none}
 
@@ -152,21 +150,13 @@ html = r"""
   }
   body.theme-light .section-title{color:#4c1d95}
 
-  .label{display:block;font-size:12px;opacity:.9;margin-bottom:4px;font-weight:800}
-  input[type="number"], select{
-    width:100%;
-    padding:10px 12px;border-radius:12px;
-    border:1px solid #ddd;background:#fbfaff;color:#111;
-  }
   .hint{font-size:12px;opacity:.85}
-  .mini{font-size:12px;opacity:.92;line-height:1.45}
+  .mini{font-size:12px;opacity:.92;line-height:1.55}
 
-  .table-wrap{overflow:auto;max-height:420px}
+  .table-wrap{overflow:auto;max-height:440px}
   table{width:100%;border-collapse:collapse;font-size:14px;color:#111}
   th,td{text-align:left;padding:8px 10px;border-bottom:1px solid #e5e7eb}
   th{background:rgba(243,232,255,.65); position:sticky; top:0}
-
-  .grid2{display:grid;gap:12px;grid-template-columns:repeat(auto-fill,minmax(240px,1fr))}
 
   .pill{
     display:inline-flex;align-items:center;gap:8px;
@@ -179,13 +169,20 @@ html = r"""
 
   .ok{color:#16a34a;font-weight:900}
   .bad{color:#dc2626;font-weight:900}
+
+  .grid2{display:grid;gap:12px;grid-template-columns:repeat(auto-fill,minmax(220px,1fr))}
+  select, input[type="number"]{
+    width:100%;
+    padding:10px 12px;border-radius:12px;
+    border:1px solid #ddd;background:#fbfaff;color:#111;
+  }
 </style>
 </head>
 
 <body class="theme-dark">
 <div class="container">
   <div class="header">
-    <div class="title">AHP (Pastel Purple) — Step-by-Step</div>
+    <div class="title">AHP — Step-by-Step (Paper Style)</div>
     <div class="row">
       <a class="btn" id="downloadSample">⬇️ Download Sample</a>
       <button class="btn" id="loadSample">📄 Load Sample</button>
@@ -195,67 +192,68 @@ html = r"""
 
   <div class="grid">
     <div>
-      <!-- Step 1 -->
       <div class="card dark">
-        <div class="section-title">Step 1: Upload CSV (auto detect criteria)</div>
+        <div class="section-title">Step 1: Upload CSV (auto-detect criteria)</div>
         <label for="csvAHP" class="btn">📤 Choose CSV</label>
         <input id="csvAHP" type="file" accept=".csv" style="display:none"/>
-        <p class="hint">First column = <b>Alternative</b>. Others = criteria.</p>
+        <p class="hint">First column = <b>Alternative</b>. Other columns = criteria names for AHP.</p>
       </div>
 
-      <!-- Show matrix -->
       <div id="mCard" class="card light" style="display:none;margin-top:14px">
-        <div class="section-title">Decision Matrix (preview)</div>
+        <div class="section-title">Detected Decision Matrix (preview)</div>
         <div class="table-wrap"><table id="tblMatrix"></table></div>
       </div>
 
-      <!-- Step 2 -->
-      <div id="typeCard" class="card dark" style="display:none;margin-top:14px">
-        <div class="section-title">Step 2: Criteria Type (Benefit / Cost)</div>
-        <div class="mini">Ini penting untuk explain criteria (contoh: <b>Cost</b> = lebih kecil lebih baik, <b>Benefit</b> = lebih besar lebih baik).</div>
-        <div id="typesWrap" class="grid2" style="margin-top:12px"></div>
+      <div id="critCard" class="card dark" style="display:none;margin-top:14px">
+        <div class="section-title">Step 2: Criteria detected (R₁…Rₘ)</div>
+        <div class="mini">These criteria will form the pairwise comparison matrix <b>P = [pᵢⱼ]</b>.</div>
+        <div id="critList" style="margin-top:10px"></div>
       </div>
 
-      <!-- Step 3 -->
       <div id="pairCard" class="card dark" style="display:none;margin-top:14px">
-        <div class="section-title">Step 3: Pairwise Comparison Matrix (Saaty)</div>
+        <div class="section-title">Step 3: Pairwise Comparison Matrix P (Saaty)</div>
         <div class="mini">
-          Isi <b>upper triangle</b> sahaja. Bawah akan auto jadi reciprocal (p<sub>ji</sub> = 1/p<sub>ij</sub>).<br/>
-          Skala: 1,3,5,7,9 (2,4,6,8 untuk intermediate).
+          Fill only <b>upper triangle</b>. The matrix is inverse-symmetrical:
+          <b>pᵢⱼ = 1 / pⱼᵢ</b>. Diagonal is 1.<br/>
+          Saaty scale: 1 (equal), 3,5,7,9; and 2,4,6,8 for intermediate.
         </div>
         <div class="table-wrap" style="margin-top:10px"><table id="ahpMatrix"></table></div>
         <div style="margin-top:10px" class="row">
           <button class="btn" id="ahpSetOnes">↺ Set all to 1</button>
-          <button class="btn" id="ahpCompute">✅ Step 4–5: Compute Weights & Consistency</button>
+          <button class="btn" id="ahpCompute">✅ Step 4–5: Compute ω and Consistency</button>
         </div>
       </div>
     </div>
 
     <div>
-      <!-- Result -->
       <div id="resultCard" class="card light" style="display:none">
         <div class="section-title">AHP Output</div>
 
-        <div class="pill">Step 4: Weights (Geometric Mean)</div>
-        <div class="table-wrap"><table id="weightsTbl"></table></div>
-
-        <div style="margin-top:14px" class="pill">Step 5: Consistency</div>
-        <div id="consBox" class="mini"></div>
-
-        <div style="margin-top:14px" class="pill">Formulas (paper)</div>
+        <div class="pill">Step 4: Weights ω (principal eigenvector)</div>
         <div class="mini">
-          Π<sub>i</sub> = ∏<sub>j</sub> p<sub>ij</sub><br/>
-          g<sub>i</sub> = (Π<sub>i</sub>)<sup>1/m</sup><br/>
-          ω<sub>i</sub> = g<sub>i</sub> / ∑ g<sub>k</sub><br/><br/>
-          y = Pω,  λ<sub>i</sub> = y<sub>i</sub>/ω<sub>i</sub>,  λ<sub>max</sub> = (1/m)∑λ<sub>i</sub><br/>
-          CI = (λ<sub>max</sub> − m)/(m − 1),  CR = CI/RI
+          Paper idea: solve <b>Pω = λω</b> and take the eigenvector for the largest eigenvalue <b>λmax</b>,
+          then normalize ω so that ∑ωᵢ = 1.
+        </div>
+        <div class="table-wrap" style="margin-top:10px"><table id="weightsTbl"></table></div>
+
+        <div style="margin-top:14px" class="pill">Step 5: Consistency (Sᵢ, S)</div>
+        <div id="consBox" class="mini" style="margin-top:6px"></div>
+
+        <div style="margin-top:14px" class="pill">Formulas used (as in paper)</div>
+        <div class="mini">
+          (Eq.1) <b>pᵢⱼ ≈ ωᵢ/ωⱼ</b> and <b>pᵢⱼ = 1/pⱼᵢ</b><br/><br/>
+          (Eq.3–4) <b>Pω = λω</b> (principal eigenvector → ω, eigenvalue → λmax)<br/><br/>
+          (Eq.5) <b>Sᵢ = (λmax − m)/(m − 1)</b><br/>
+          (Eq.6) <b>S = Sᵢ / S_A</b> (S_A = random consistency index / RI)<br/>
+          Acceptable if <b>S ≤ 0.10</b>.
         </div>
       </div>
 
       <div class="card dark" style="margin-top:16px">
         <div class="section-title">Tip</div>
         <div class="mini">
-          Kalau <b>CR &gt; 0.10</b> → pairwise kau tak konsisten. Adjust upper triangle sampai <b>CR ≤ 0.10</b>.
+          Kalau <b>S (CR) &gt; 0.10</b> → pairwise kau tak konsisten.
+          Adjust upper triangle values sampai <b>S ≤ 0.10</b>.
         </div>
       </div>
     </div>
@@ -306,8 +304,8 @@ html = r"""
     return rows;
   }
 
-  function renderTable(tid, cols, rows){
-    const tb=$(tid); tb.innerHTML="";
+  function renderPreviewTable(cols, rows){
+    const tb=$("tblMatrix"); tb.innerHTML="";
     const thead=document.createElement("thead");
     const trh=document.createElement("tr");
     cols.forEach(c=>{ const th=document.createElement("th"); th.textContent=c; trh.appendChild(th); });
@@ -316,7 +314,11 @@ html = r"""
     const tbody=document.createElement("tbody");
     rows.forEach(r=>{
       const tr=document.createElement("tr");
-      cols.forEach((c,ci)=>{ const td=document.createElement("td"); td.textContent=String(r[ci] ?? ""); tr.appendChild(td); });
+      cols.forEach((c,ci)=>{
+        const td=document.createElement("td");
+        td.textContent=String(r[ci] ?? "");
+        tr.appendChild(td);
+      });
       tbody.appendChild(tr);
     });
     tb.appendChild(tbody);
@@ -326,9 +328,8 @@ html = r"""
   let header = [];
   let crit = [];
   let P = [];
-  let critType = {}; // Benefit/Cost
 
-  // Random Index
+  // Random Consistency Index values (Table 1 in your screenshot)
   const RI = {
     1:0.00, 2:0.00, 3:0.58, 4:0.90, 5:1.12, 6:1.24, 7:1.32, 8:1.41, 9:1.45, 10:1.49,
     11:1.51, 12:1.48, 13:1.56, 14:1.57, 15:1.59
@@ -351,18 +352,24 @@ html = r"""
       return;
     }
 
-    // matrix preview
-    const preview = arr.slice(0, Math.min(arr.length, 11)); // header + 10 rows
-    renderTable("tblMatrix", header, preview.slice(1));
+    // preview (header + up to 10 rows)
+    const previewRows = arr.slice(1, Math.min(arr.length, 11));
+    renderPreviewTable(header, previewRows);
     show($("mCard"), true);
 
-    // default type: Benefit
-    critType = Object.fromEntries(crit.map(c=> [c, "Benefit"]));
-    renderTypes();
+    // show criteria pills
+    const cl = $("critList");
+    cl.innerHTML = "";
+    crit.forEach(c=>{
+      const pill=document.createElement("span");
+      pill.className="pill";
+      pill.textContent=c;
+      cl.appendChild(pill);
+    });
+    show($("critCard"), true);
 
+    // build P
     buildPairwiseMatrix();
-
-    show($("typeCard"), true);
     show($("pairCard"), true);
     show($("resultCard"), false);
   }
@@ -373,45 +380,6 @@ html = r"""
     r.onload = ()=> initAll(String(r.result));
     r.readAsText(f);
   };
-
-  function renderTypes(){
-    const wrap = $("typesWrap");
-    wrap.innerHTML = "";
-    crit.forEach(c=>{
-      const box=document.createElement("div");
-
-      const lab=document.createElement("div");
-      lab.className="label";
-      lab.textContent = c;
-      box.appendChild(lab);
-
-      const sel=document.createElement("select");
-      ["Benefit","Cost"].forEach(v=>{
-        const o=document.createElement("option");
-        o.value=v; o.textContent=v;
-        sel.appendChild(o);
-      });
-      sel.value = critType[c] || "Benefit";
-      sel.onchange = ()=>{ critType[c]=sel.value; };
-      box.appendChild(sel);
-
-      const small=document.createElement("div");
-      small.className="hint";
-      small.style.marginTop="6px";
-      small.innerHTML = (sel.value==="Cost")
-        ? "Cost: kecil lebih baik (min)."
-        : "Benefit: besar lebih baik (max).";
-      sel.onchange = ()=>{
-        critType[c]=sel.value;
-        small.innerHTML = (sel.value==="Cost")
-          ? "Cost: kecil lebih baik (min)."
-          : "Benefit: besar lebih baik (max).";
-      };
-      box.appendChild(small);
-
-      wrap.appendChild(box);
-    });
-  }
 
   function buildPairwiseMatrix(){
     const m = crit.length;
@@ -429,7 +397,6 @@ html = r"""
     const tbody = document.createElement("tbody");
     for(let i=0;i<m;i++){
       const tr = document.createElement("tr");
-
       const th = document.createElement("th");
       th.textContent = crit[i];
       tr.appendChild(th);
@@ -461,7 +428,6 @@ html = r"""
         } else {
           td.textContent = (P[i][j]).toFixed(6);
         }
-
         tr.appendChild(td);
       }
       tbody.appendChild(tr);
@@ -481,45 +447,76 @@ html = r"""
     $("ahpCompute").onclick = ()=> computeAHP();
   }
 
+  // multiply matrix-vector
+  function matVec(A, x){
+    const m=A.length;
+    const y=new Array(m).fill(0);
+    for(let i=0;i<m;i++){
+      let s=0;
+      for(let j=0;j<m;j++) s += A[i][j]*x[j];
+      y[i]=s;
+    }
+    return y;
+  }
+  function norm1(x){
+    let s=0; for(const v of x) s += Math.abs(v);
+    return s || 1;
+  }
+  function normalizeToSum1(x){
+    let s=0; for(const v of x) s += v;
+    s = s || 1;
+    return x.map(v=> v/s);
+  }
+
+  // Step 4: principal eigenvector via power iteration
+  function powerIteration(A, maxIter=2000, tol=1e-12){
+    const m=A.length;
+    let w=new Array(m).fill(1/m); // start uniform
+    for(let it=0; it<maxIter; it++){
+      const y = matVec(A, w);
+      const wNew = normalizeToSum1(y.map(v=> Math.max(v, 1e-18))); // keep positive
+      // diff
+      let diff=0;
+      for(let i=0;i<m;i++) diff = Math.max(diff, Math.abs(wNew[i]-w[i]));
+      w = wNew;
+      if(diff < tol) break;
+    }
+    return w;
+  }
+
   function computeAHP(){
     const m = crit.length;
 
-    // Step 4 (paper): Π_i, g_i, ω_i (Geometric Mean)
-    const prod = new Array(m).fill(1);
-    for(let i=0;i<m;i++){
-      let p=1;
-      for(let j=0;j<m;j++) p *= P[i][j];
-      prod[i]=p;
-    }
-    const g = prod.map(v=> Math.pow(v, 1/m));
-    const sumg = g.reduce((s,v)=> s+v, 0) || 1;
-    const w = g.map(v=> v/sumg);
+    // ---- Step 4 (paper): solve Pω = λω, take principal eigenvector, normalize ----
+    const w = powerIteration(P);
 
-    // Step 5 (paper): λmax, CI, CR
-    const y = new Array(m).fill(0);
-    for(let i=0;i<m;i++){
-      let s=0;
-      for(let j=0;j<m;j++) s += P[i][j]*w[j];
-      y[i]=s;
-    }
-    const lam = y.map((yi,i)=> yi/(w[i] || 1e-12));
+    // ---- Step 5 (paper): λmax, S_I, S = S_I / RI ----
+    // Use λ_i = (Pω)_i / ω_i and λmax = average(λ_i)
+    const Pw = matVec(P, w);
+    const lam = Pw.map((v,i)=> v/(w[i] || 1e-18));
     const lamMax = lam.reduce((s,v)=> s+v, 0) / m;
 
-    const CI = (lamMax - m) / (m - 1);
-    const ri = RI[m] ?? (1.98*(m-2)/m); // fallback approximation
-    const CR = (ri === 0) ? 0 : (CI / ri);
+    // Eq (5): S_I
+    const SI = (lamMax - m) / (m - 1);
 
-    renderWeightsTable(w, g, prod);
-    renderConsistency(lamMax, CI, CR, ri);
+    // RI
+    const SA = (RI[m] !== undefined) ? RI[m] : (1.98*(m-2)/m); // approximation if m>15
+
+    // Eq (6): S
+    const S = (SA === 0) ? 0 : (SI / SA);
+
+    renderWeightsTable(w, Pw, lam, lamMax);
+    renderConsistency(m, lamMax, SI, SA, S);
 
     show($("resultCard"), true);
   }
 
-  function renderWeightsTable(w, g, prod){
+  function renderWeightsTable(w, Pw, lam, lamMax){
     const tb = $("weightsTbl");
     tb.innerHTML = "";
     const thead = document.createElement("thead");
-    thead.innerHTML = "<tr><th>Criterion</th><th>Type</th><th>Πᵢ</th><th>gᵢ</th><th>Weight ωᵢ</th></tr>";
+    thead.innerHTML =
+      "<tr><th>Criterion</th><th>Weight ωᵢ</th><th>(Pω)ᵢ</th><th>λᵢ = (Pω)ᵢ/ωᵢ</th></tr>";
     tb.appendChild(thead);
 
     const tbody = document.createElement("tbody");
@@ -527,25 +524,34 @@ html = r"""
       const tr = document.createElement("tr");
       tr.innerHTML =
         `<td>${c}</td>
-         <td><b>${critType[c] || "Benefit"}</b></td>
-         <td>${prod[i].toExponential(6)}</td>
-         <td>${g[i].toFixed(6)}</td>
-         <td><b>${w[i].toFixed(6)}</b></td>`;
+         <td><b>${w[i].toFixed(6)}</b></td>
+         <td>${Pw[i].toFixed(6)}</td>
+         <td>${lam[i].toFixed(6)}</td>`;
       tbody.appendChild(tr);
     });
+
+    // footer row for λmax
+    const trf = document.createElement("tr");
+    trf.innerHTML =
+      `<td colspan="3" style="text-align:right"><b>λ<sub>max</sub></b></td>
+       <td><b>${lamMax.toFixed(6)}</b></td>`;
+    tbody.appendChild(trf);
+
     tb.appendChild(tbody);
   }
 
-  function renderConsistency(lamMax, CI, CR, ri){
+  function renderConsistency(m, lamMax, SI, SA, S){
     const box = $("consBox");
-    const ok = (CR <= 0.10);
+    const ok = (S <= 0.10);
     box.innerHTML =
-      `<div>m = <b>${crit.length}</b></div>
+      `<div>m = <b>${m}</b></div>
        <div>λ<sub>max</sub> = <b>${lamMax.toFixed(6)}</b></div>
-       <div>CI = <b>${CI.toFixed(6)}</b></div>
-       <div>RI = <b>${ri.toFixed(2)}</b></div>
-       <div>CR = <b>${CR.toFixed(6)}</b> → ${ok ? "<span class='ok'>ACCEPTABLE (≤ 0.10)</span>" : "<span class='bad'>NOT OK (&gt; 0.10)</span>"}</div>
-       <div class="hint" style="margin-top:6px">If CR not OK, revise pairwise values until CR ≤ 0.10.</div>`;
+       <div>S<sub>I</sub> = (λ<sub>max</sub> − m)/(m − 1) = <b>${SI.toFixed(6)}</b></div>
+       <div>S<sub>A</sub> (RI) = <b>${SA.toFixed(2)}</b></div>
+       <div>S = S<sub>I</sub> / S<sub>A</sub> = <b>${S.toFixed(6)}</b> → ${ok ? "<span class='ok'>ACCEPTABLE (≤ 0.10)</span>" : "<span class='bad'>NOT OK (&gt; 0.10)</span>"}</div>
+       <div class="hint" style="margin-top:8px">
+         If NOT OK: adjust upper triangle pairwise values until S ≤ 0.10.
+       </div>`;
   }
 
   // preload sample
@@ -557,7 +563,9 @@ html = r"""
 </html>
 """
 
-# Inject sample csv (SAFE)
 html = html.replace("__INJECT_SAMPLE_CSV__", SAFE_SAMPLE_CSV)
+components.html(html, height=2600, scrolling=True)
+"""
 
-components.html(html, height=2400, scrolling=True)
+# Render the HTML app
+components.html(html.replace("__INJECT_SAMPLE_CSV__", SAFE_SAMPLE_CSV), height=2600, scrolling=True)
