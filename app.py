@@ -1,5 +1,4 @@
 # app.py
-import base64
 from pathlib import Path
 import streamlit as st
 import streamlit.components.v1 as components
@@ -9,15 +8,6 @@ APP_DIR = Path(__file__).resolve().parent
 
 # ---------- Single source of truth for SAMPLE (PAIRWISE) CSV ----------
 def load_sample_csv_text() -> str:
-    # If you already have a sample file, uncomment and set path
-    # p = Path("/mnt/data/sample_pairwise.csv")
-    # if p.exists():
-    #     for enc in ("utf-8", "latin-1"):
-    #         try:
-    #             return p.read_text(encoding=enc)
-    #         except Exception:
-    #             pass
-
     # Fallback: AHP pairwise sample (7x7) using fractions
     return (
         "Criteria,B1,B2,B3,B4,B5,B6,B7\n"
@@ -32,7 +22,6 @@ def load_sample_csv_text() -> str:
 
 SAMPLE_CSV = load_sample_csv_text()
 
-# ------------------------------- HTML APP -------------------------------
 html = r"""
 <!doctype html>
 <html lang="en">
@@ -43,31 +32,47 @@ html = r"""
 <style>
   :root{
     --bg-dark:#0b0b0f;
-    --grad-light:#e9d5ff; /* purple blush */
+    --bg-light:#f8fafc;
+
+    --grad-dark:#e9d5ff;   /* purple blush */
+    --grad-light:#e9d5ff;
+
     --card-dark:#0f1115cc;
     --card-light:#ffffffcc;
 
-    --text-light:#f5f5f5;
+    --text-dark:#e5e7eb;
+    --text-light:#111;
 
     /* PURPLE PASTEL THEME */
-    --pri:#a78bfa;        /* purple */
-    --pri-700:#7c3aed;    /* deeper purple */
-    --pri-soft:#ede9fe;   /* very light purple */
+    --pri:#a78bfa;
+    --pri-700:#7c3aed;
+
     --border-dark:#262b35;
-    --border-light:#f1f5f9;
+    --border-light:#e5e7eb;
   }
 
   *{box-sizing:border-box}
   html,body{height:100%;margin:0}
   body{
     font-family:ui-sans-serif,system-ui,-apple-system,"Segoe UI",Roboto,Arial;
+  }
+
+  /* THEMES */
+  body.theme-dark{
+    color:var(--text-dark);
+    background:linear-gradient(180deg,var(--bg-dark) 0%,var(--bg-dark) 35%,var(--grad-dark) 120%);
+  }
+  body.theme-light{
     color:var(--text-light);
-    background:linear-gradient(180deg,#0b0b0f 0%,#0b0b0f 35%,var(--grad-light) 120%);
+    background:linear-gradient(180deg,var(--bg-light) 0%,var(--bg-light) 40%,var(--grad-light) 120%);
   }
 
   .container{max-width:1200px;margin:24px auto;padding:0 16px}
   .header{display:flex;align-items:center;justify-content:space-between;margin-bottom:12px}
-  .title{font-weight:800;font-size:28px;color:#f3e8ff} /* purple-ish white */
+  .title{font-weight:800;font-size:28px}
+  body.theme-dark .title{color:#f3e8ff}
+  body.theme-light .title{color:#111}
+
   .row{display:flex;gap:10px;align-items:center;flex-wrap:wrap}
 
   .btn{
@@ -75,19 +80,32 @@ html = r"""
     padding:10px 14px;border-radius:12px;
     border:1px solid var(--pri-700);
     background:var(--pri);
-    color:#111; /* readable on pastel */
+    color:#111;
     cursor:pointer;
-    font-weight:700;
+    font-weight:800;
     text-decoration:none;
   }
   .btn:hover{filter:brightness(0.96)}
+
+  .toggle{
+    padding:10px 14px;border-radius:12px;
+    border:1px solid rgba(255,255,255,.25);
+    background:rgba(255,255,255,.08);
+    cursor:pointer;font-weight:800;
+  }
+  body.theme-light .toggle{
+    border:1px solid rgba(0,0,0,.15);
+    background:rgba(255,255,255,.8);
+    color:#111;
+  }
 
   .tabs{display:flex;gap:8px;margin:12px 0;position:relative;z-index:10}
   .tab{
     padding:10px 14px;border-radius:12px;
     border:1px solid #333;background:#202329;color:#ddd;cursor:pointer
   }
-  .tab.active{background:var(--pri);border-color:var(--pri-700);color:#111;font-weight:800}
+  body.theme-light .tab{background:#e5e7eb;color:#111;border-color:#cbd5e1}
+  .tab.active{background:var(--pri);border-color:var(--pri-700);color:#111;font-weight:900}
 
   .grid{display:grid;gap:16px;grid-template-columns:1fr}
   @media (min-width:1024px){.grid{grid-template-columns:1fr 2fr}}
@@ -97,26 +115,38 @@ html = r"""
     border:1px solid var(--border-light);
     backdrop-filter:blur(6px)
   }
-  .card.dark{background:var(--card-dark);color:#e5e7eb;border-color:var(--border-dark)}
-  .card.light{background:var(--card-light);color:#111;border-color:var(--border-light)}
 
-  .section-title{font-weight:700;font-size:18px;margin-bottom:12px;color:#e9d5ff}
+  .card.dark{background:var(--card-dark);border-color:var(--border-dark)}
+  .card.light{background:var(--card-light);border-color:var(--border-light)}
+
+  body.theme-light .card.dark{
+    background:#ffffffcc;
+    border-color:#e5e7eb;
+    color:#111;
+  }
+
+  .section-title{font-weight:800;font-size:18px;margin-bottom:12px}
+  body.theme-dark .section-title{color:#e9d5ff}
+  body.theme-light .section-title{color:#4c1d95}
+
   .hint{font-size:12px;opacity:.85}
 
   .table-wrap{overflow:auto;max-height:360px}
-  table{width:100%;border-collapse:collapse;font-size:14px;color:#111}
+  table{width:100%;border-collapse:collapse;font-size:14px}
   th,td{text-align:left;padding:8px 10px;border-bottom:1px solid #e5e7eb;white-space:nowrap}
+  body.theme-dark table{color:#111}
+  body.theme-dark th, body.theme-dark td{border-bottom:1px solid #e5e7eb}
 
   .chart2{width:100%;height:360px;border:1px dashed #9ca3af;border-radius:12px;background:transparent}
-  .chartTall{width:100%;height:480px;border:1px dashed #9ca3af;border-radius:12px;background:transparent}
-
   .pill{
     display:inline-flex;align-items:center;gap:8px;
     padding:6px 10px;border-radius:999px;
-    border:1px solid rgba(167,139,250,.6);
+    border:1px solid rgba(167,139,250,.55);
     background:rgba(167,139,250,.12);
-    margin:0 6px 6px 0;font-size:12px;color:#fff
+    margin:0 6px 6px 0;font-size:12px
   }
+  body.theme-dark .pill{color:#fff}
+  body.theme-light .pill{color:#111}
 
   /* Tooltip */
   #tt{position:fixed;display:none;pointer-events:none;background:#fff;color:#111;
@@ -126,7 +156,8 @@ html = r"""
   .bad{color:#dc2626;font-weight:900}
 </style>
 </head>
-<body>
+
+<body class="theme-dark">
 <div class="container">
 
   <div class="header">
@@ -134,6 +165,7 @@ html = r"""
     <div class="row">
       <a class="btn" id="downloadSample">⬇️ Download Sample</a>
       <button class="btn" id="loadSample">📄 Load Sample</button>
+      <button class="toggle" id="themeToggle">🌙 Dark</button>
     </div>
   </div>
 
@@ -219,7 +251,6 @@ html = r"""
 
 </div>
 
-<!-- tooltip -->
 <div id="tt"></div>
 
 <script>
@@ -227,12 +258,22 @@ html = r"""
   const $  = (id)=> document.getElementById(id);
   const show = (el,on=true)=> el.style.display = on ? "" : "none";
 
-  // purple-ish pastels for bars
   const PASTELS = ["#a78bfa","#c4b5fd","#ddd6fe","#f5d0fe","#e9d5ff","#c7d2fe","#fbcfe8","#bfdbfe","#d1fae5","#fde68a"];
-
-  // ---------- injected by Python ----------
   const SAMPLE_TEXT = `__INJECT_SAMPLE_CSV__`;
 
+  // ---------- Theme ----------
+  let dark = true;
+  function applyTheme(){
+    document.body.classList.toggle("theme-dark", dark);
+    document.body.classList.toggle("theme-light", !dark);
+    $("themeToggle").textContent = dark ? "🌙 Dark" : "☀️ Light";
+    // re-render charts to match theme colors
+    rerenderCharts();
+  }
+  $("themeToggle").onclick = ()=>{ dark = !dark; applyTheme(); };
+  applyTheme();
+
+  // ---------- Download/Load sample ----------
   $("downloadSample").href = "data:text/csv;charset=utf-8,"+encodeURIComponent(SAMPLE_TEXT);
   $("downloadSample").download = "ahp_pairwise_sample.csv";
   $("loadSample").onclick = ()=> initAHP(SAMPLE_TEXT);
@@ -275,7 +316,7 @@ html = r"""
     return isFinite(x) ? x : NaN;
   }
 
-  // Saaty RI table
+  // Saaty RI
   const RI_TABLE = {1:0,2:0,3:0.58,4:0.90,5:1.12,6:1.24,7:1.32,8:1.41,9:1.45,10:1.49,11:1.51,12:1.48,13:1.56,14:1.57,15:1.59};
   function RI(m){
     if(RI_TABLE[m]!=null) return RI_TABLE[m];
@@ -283,7 +324,7 @@ html = r"""
     return 1.98*(m-2)/m;
   }
 
-  // ---------- render table ----------
+  // ---------- Render table ----------
   function renderTable(tableId, cols, rows){
     const tb=$(tableId); tb.innerHTML="";
     const thead=document.createElement("thead");
@@ -309,51 +350,76 @@ html = r"""
   function showTT(x,y,html){ TT.style.display="block"; TT.style.left=(x+12)+"px"; TT.style.top=(y+12)+"px"; TT.innerHTML=html; }
   function hideTT(){ TT.style.display="none"; }
 
+  // ---------- Chart colors (depends on theme) ----------
+  function axisColor(){ return dark ? "#e5e7eb" : "#111"; }
+  function gridColor(){ return dark ? "rgba(229,231,235,.35)" : "rgba(17,17,17,.25)"; }
+  function textColor(){ return dark ? "#e5e7eb" : "#111"; }
+  function lineColor(){ return dark ? "#f5f3ff" : "#111"; }
+
   // ---------- Charts ----------
   function drawBar(svgId, data){
-    const svg=$(svgId); while(svg.firstChild) svg.removeChild(svg.firstChild);
-    const W=(svg.getBoundingClientRect().width||800), H=(svg.getBoundingClientRect().height||360);
+    const svg=$(svgId); if(!svg) return;
+    while(svg.firstChild) svg.removeChild(svg.firstChild);
+
+    const W=(svg.getBoundingClientRect().width||900);
+    const H=(svg.getBoundingClientRect().height||360);
     svg.setAttribute("viewBox","0 0 "+W+" "+H);
+
     const padL=50,padR=20,padT=18,padB=44;
     const max=Math.max(...data.map(d=>d.value))||1;
     const cell=(W-padL-padR)/data.length, barW=cell*0.8;
 
     const yAxis=document.createElementNS("http://www.w3.org/2000/svg","line");
-    yAxis.setAttribute("x1",padL); yAxis.setAttribute("x2",padL); yAxis.setAttribute("y1",padT); yAxis.setAttribute("y2",H-padB); yAxis.setAttribute("stroke","#000"); svg.appendChild(yAxis);
+    yAxis.setAttribute("x1",padL); yAxis.setAttribute("x2",padL);
+    yAxis.setAttribute("y1",padT); yAxis.setAttribute("y2",H-padB);
+    yAxis.setAttribute("stroke",axisColor()); svg.appendChild(yAxis);
+
     const xAxis=document.createElementNS("http://www.w3.org/2000/svg","line");
-    xAxis.setAttribute("x1",padL); xAxis.setAttribute("x2",W-padR); xAxis.setAttribute("y1",H-padB); xAxis.setAttribute("y2",H-padB); xAxis.setAttribute("stroke","#000"); svg.appendChild(xAxis);
+    xAxis.setAttribute("x1",padL); xAxis.setAttribute("x2",W-padR);
+    xAxis.setAttribute("y1",H-padB); xAxis.setAttribute("y2",H-padB);
+    xAxis.setAttribute("stroke",axisColor()); svg.appendChild(xAxis);
 
     for(let t=0;t<=5;t++){
       const val=max*t/5, y=H-padB-(H-padT-padB)*(val/max);
       const gl=document.createElementNS("http://www.w3.org/2000/svg","line");
-      gl.setAttribute("x1",padL); gl.setAttribute("x2",W-padR); gl.setAttribute("y1",y); gl.setAttribute("y2",y);
-      gl.setAttribute("stroke","#000"); gl.setAttribute("stroke-dasharray","3 3"); svg.appendChild(gl);
+      gl.setAttribute("x1",padL); gl.setAttribute("x2",W-padR);
+      gl.setAttribute("y1",y); gl.setAttribute("y2",y);
+      gl.setAttribute("stroke",gridColor()); gl.setAttribute("stroke-dasharray","3 3"); svg.appendChild(gl);
+
       const tx=document.createElementNS("http://www.w3.org/2000/svg","text");
-      tx.setAttribute("x",padL-10); tx.setAttribute("y",y+4); tx.setAttribute("text-anchor","end");
-      tx.setAttribute("font-size","12"); tx.setAttribute("fill","#000"); tx.textContent=val.toFixed(3); svg.appendChild(tx);
+      tx.setAttribute("x",padL-10); tx.setAttribute("y",y+4);
+      tx.setAttribute("text-anchor","end");
+      tx.setAttribute("font-size","12"); tx.setAttribute("fill",textColor());
+      tx.textContent=val.toFixed(3); svg.appendChild(tx);
     }
 
     data.forEach((d,i)=>{
       const x=padL+i*cell+(cell-barW)/2, h=(H-padT-padB)*(d.value/max), y=H-padB-h;
       const r=document.createElementNS("http://www.w3.org/2000/svg","rect");
-      r.setAttribute("x",x); r.setAttribute("y",y); r.setAttribute("width",barW); r.setAttribute("height",h);
+      r.setAttribute("x",x); r.setAttribute("y",y);
+      r.setAttribute("width",barW); r.setAttribute("height",h);
       r.setAttribute("fill", PASTELS[i%PASTELS.length]);
       r.addEventListener("mousemove",(ev)=> showTT(ev.clientX, ev.clientY, `<b>${d.name}</b><br/>ω = ${d.value.toFixed(6)}`));
       r.addEventListener("mouseleave", hideTT);
       svg.appendChild(r);
 
       const lbl=document.createElementNS("http://www.w3.org/2000/svg","text");
-      lbl.setAttribute("x",x+barW/2); lbl.setAttribute("y",H-12); lbl.setAttribute("text-anchor","middle");
-      lbl.setAttribute("font-size","12"); lbl.setAttribute("fill","#000"); lbl.textContent=d.name; svg.appendChild(lbl);
+      lbl.setAttribute("x",x+barW/2); lbl.setAttribute("y",H-12);
+      lbl.setAttribute("text-anchor","middle");
+      lbl.setAttribute("font-size","12"); lbl.setAttribute("fill",textColor());
+      lbl.textContent=d.name; svg.appendChild(lbl);
     });
   }
 
   function drawLine(svgId, data){
-    const svg=$(svgId); while(svg.firstChild) svg.removeChild(svg.firstChild);
-    const W=(svg.getBoundingClientRect().width||800), H=(svg.getBoundingClientRect().height||300);
-    svg.setAttribute("viewBox","0 0 "+W+" "+H);
-    const padL=50,padR=20,padT=14,padB=30;
+    const svg=$(svgId); if(!svg) return;
+    while(svg.firstChild) svg.removeChild(svg.firstChild);
 
+    const W=(svg.getBoundingClientRect().width||900);
+    const H=(svg.getBoundingClientRect().height||360);
+    svg.setAttribute("viewBox","0 0 "+W+" "+H);
+
+    const padL=60,padR=20,padT=18,padB=44;
     const maxY=Math.max(...data.map(d=>d.value))||1;
     const minX=1, maxX=Math.max(...data.map(d=>d.x))||1;
 
@@ -361,10 +427,30 @@ html = r"""
     const sy=(v)=> H-padB-(H-padT-padB)*(v/maxY);
 
     const yAxis=document.createElementNS("http://www.w3.org/2000/svg","line");
-    yAxis.setAttribute("x1",padL); yAxis.setAttribute("x2",padL); yAxis.setAttribute("y1",padT); yAxis.setAttribute("y2",H-padB); yAxis.setAttribute("stroke","#000"); svg.appendChild(yAxis);
-    const xAxis=document.createElementNS("http://www.w3.org/2000/svg","line");
-    xAxis.setAttribute("x1",padL); xAxis.setAttribute("x2",W-padR); xAxis.setAttribute("y1",H-padB); xAxis.setAttribute("y2",H-padB); xAxis.setAttribute("stroke","#000"); svg.appendChild(xAxis);
+    yAxis.setAttribute("x1",padL); yAxis.setAttribute("x2",padL);
+    yAxis.setAttribute("y1",padT); yAxis.setAttribute("y2",H-padB);
+    yAxis.setAttribute("stroke",axisColor()); svg.appendChild(yAxis);
 
+    const xAxis=document.createElementNS("http://www.w3.org/2000/svg","line");
+    xAxis.setAttribute("x1",padL); xAxis.setAttribute("x2",W-padR);
+    xAxis.setAttribute("y1",H-padB); xAxis.setAttribute("y2",H-padB);
+    xAxis.setAttribute("stroke",axisColor()); svg.appendChild(xAxis);
+
+    for(let t=0;t<=5;t++){
+      const val=maxY*t/5, y=sy(val);
+      const gl=document.createElementNS("http://www.w3.org/2000/svg","line");
+      gl.setAttribute("x1",padL); gl.setAttribute("x2",W-padR);
+      gl.setAttribute("y1",y); gl.setAttribute("y2",y);
+      gl.setAttribute("stroke",gridColor()); gl.setAttribute("stroke-dasharray","3 3"); svg.appendChild(gl);
+
+      const tx=document.createElementNS("http://www.w3.org/2000/svg","text");
+      tx.setAttribute("x",padL-10); tx.setAttribute("y",y+4);
+      tx.setAttribute("text-anchor","end");
+      tx.setAttribute("font-size","12"); tx.setAttribute("fill",textColor());
+      tx.textContent=val.toFixed(3); svg.appendChild(tx);
+    }
+
+    // path
     const p=document.createElementNS("http://www.w3.org/2000/svg","path");
     let dstr="";
     data.sort((a,b)=> a.x-b.x).forEach((pt,i)=>{
@@ -372,18 +458,39 @@ html = r"""
       dstr += (i===0? "M":"L")+x+" "+y+" ";
 
       const c=document.createElementNS("http://www.w3.org/2000/svg","circle");
-      c.setAttribute("cx",x); c.setAttribute("cy",y); c.setAttribute("r","4"); c.setAttribute("fill","#111");
+      c.setAttribute("cx",x); c.setAttribute("cy",y);
+      c.setAttribute("r","4");
+      c.setAttribute("fill", lineColor());
       c.addEventListener("mousemove",(ev)=> showTT(ev.clientX, ev.clientY, `<b>${pt.name}</b><br/>λᵢ = ${pt.value.toFixed(6)}`));
       c.addEventListener("mouseleave", hideTT);
       svg.appendChild(c);
 
       const tx=document.createElementNS("http://www.w3.org/2000/svg","text");
       tx.setAttribute("x",x); tx.setAttribute("y",H-10);
-      tx.setAttribute("text-anchor","middle"); tx.setAttribute("font-size","11"); tx.setAttribute("fill","#000");
-      tx.textContent = pt.x; svg.appendChild(tx);
+      tx.setAttribute("text-anchor","middle");
+      tx.setAttribute("font-size","11"); tx.setAttribute("fill",textColor());
+      tx.textContent = pt.name; svg.appendChild(tx);
     });
-    p.setAttribute("d", dstr.trim()); p.setAttribute("fill","none"); p.setAttribute("stroke","#111"); p.setAttribute("stroke-width","2");
+
+    p.setAttribute("d", dstr.trim());
+    p.setAttribute("fill","none");
+    p.setAttribute("stroke", lineColor());
+    p.setAttribute("stroke-width","2.5");
     svg.appendChild(p);
+  }
+
+  // ---------- store last results for re-render ----------
+  let lastRowLabels = null;
+  let lastW = null;
+  let lastLam = null;
+
+  function rerenderCharts(){
+    if(!lastRowLabels || !lastW || !lastLam) return;
+    // delay a bit to ensure layout updated after theme class change
+    setTimeout(()=>{
+      drawBar("barW", lastRowLabels.map((name,i)=> ({name, value:lastW[i]})));
+      drawLine("lineL", lastRowLabels.map((name,i)=> ({name, x:i+1, value:lastLam[i]})));
+    }, 30);
   }
 
   // ---------- AHP core ----------
@@ -394,14 +501,13 @@ html = r"""
     const header = arr[0];
     if(header.length<2) return;
 
-    const colLabels = header.slice(1);     // columns after first
+    const colLabels = header.slice(1);
     const rowLabels = arr.slice(1).map(r=> r[0]).filter(x=> x!=="" );
 
     const m = rowLabels.length;
     if(m<2){ alert("Need at least 2 criteria."); return; }
     if(colLabels.length !== m){ alert("Matrix must be square: number of columns must equal number of rows."); return; }
 
-    // Build numeric matrix P
     const P = [];
     for(let i=0;i<m;i++){
       const r = arr[i+1];
@@ -415,7 +521,6 @@ html = r"""
       P.push(row);
     }
 
-    // Reciprocal check
     let maxErr = 0;
     for(let i=0;i<m;i++){
       maxErr = Math.max(maxErr, Math.abs(P[i][i]-1));
@@ -424,17 +529,11 @@ html = r"""
       }
     }
 
-    // Step 2: Pi
     const Pi = P.map(row => row.reduce((a,b)=> a*b, 1));
-
-    // Step 3: GM
     const GM = Pi.map(v => Math.pow(v, 1/m));
-
-    // Step 4: w
     const sumGM = GM.reduce((a,b)=> a+b, 0) || 1;
     const w = GM.map(v => v/sumGM);
 
-    // Step 5: multiply table (p_ij * w_j) and Pw
     const Mul = [];
     const Pw = [];
     for(let i=0;i<m;i++){
@@ -449,40 +548,29 @@ html = r"""
       Pw.push(s);
     }
 
-    // Step 6: lambda_i and lambda_max
     const lam = Pw.map((v,i)=> v/(w[i] || 1e-18));
     const lam_max = lam.reduce((a,b)=> a+b, 0)/m;
 
-    // Step 7: SI and CR
     const SI = (m<=2) ? 0 : (lam_max - m)/(m-1);
     const ri = RI(m);
     const CR = (ri===0) ? 0 : (SI/ri);
 
-    // ---------- Render tables ----------
-    // P table (numeric)
+    // Tables
     const Pcols = [" "].concat(colLabels);
     const Prows = rowLabels.map((rl,i)=> [rl].concat(P[i].map(x=> x.toFixed(6))) );
     renderTable("tblP", Pcols, Prows);
 
-    // Π table
     renderTable("tblPi", ["Criteria","Π_i"], rowLabels.map((rl,i)=> [rl, Pi[i].toFixed(9)]) );
-
-    // GM table
     renderTable("tblGM", ["Criteria","GM_i"], rowLabels.map((rl,i)=> [rl, GM[i].toFixed(9)]) );
-
-    // W table
     renderTable("tblW", ["Criteria","GM_i","ΣGM","ω_i"], rowLabels.map((rl,i)=> [rl, GM[i].toFixed(9), sumGM.toFixed(9), w[i].toFixed(9)]) );
 
-    // Mul + Pw
     const mulCols = [" "].concat(colLabels);
     const mulRows = rowLabels.map((rl,i)=> [rl].concat(Mul[i].map(x=> x.toFixed(9))) );
     renderTable("tblMul", mulCols, mulRows);
     renderTable("tblPw", ["Criteria","(Pω)_i (row-sum)"], rowLabels.map((rl,i)=> [rl, Pw[i].toFixed(9)]) );
 
-    // Lambda
     renderTable("tblLam", ["Criteria","ω_i","(Pω)_i","λ_i"], rowLabels.map((rl,i)=> [rl, w[i].toFixed(9), Pw[i].toFixed(9), lam[i].toFixed(9)]) );
 
-    // CR table
     renderTable("tblCR",
       ["m","λmax","SI","RI","CR","Decision"],
       [[
@@ -495,7 +583,7 @@ html = r"""
       ]]
     );
 
-    // ---------- Summary box ----------
+    // Summary
     const ok = (CR<=0.10);
     $("statBox").innerHTML = `
       <div>Reciprocal check max error: <b>${maxErr.toExponential(2)}</b></div>
@@ -505,11 +593,7 @@ html = r"""
       <div><b>CR</b> = ${CR.toFixed(9)} &nbsp;→&nbsp; ${ok ? '<span class="ok">ACCEPTABLE</span>' : '<span class="bad">NOT OK</span>'}</div>
     `;
 
-    // ---------- Charts ----------
-    drawBar("barW", rowLabels.map((name,i)=> ({name, value:w[i]})));
-    drawLine("lineL", rowLabels.map((name,i)=> ({name, x:i+1, value:lam[i]})));
-
-    // ---------- Show sections ----------
+    // show sections FIRST
     show($("stat"),true);
     show($("wcard"),true);
     show($("lcard"),true);
@@ -520,9 +604,20 @@ html = r"""
     show($("s5"),true);
     show($("s6"),true);
     show($("s7"),true);
+
+    // store for theme re-render
+    lastRowLabels = rowLabels.slice();
+    lastW = w.slice();
+    lastLam = lam.slice();
+
+    // draw charts after layout (IMPORTANT)
+    setTimeout(()=>{
+      drawBar("barW", rowLabels.map((name,i)=> ({name, value:w[i]})));
+      drawLine("lineL", rowLabels.map((name,i)=> ({name, x:i+1, value:lam[i]})));
+    }, 50);
   }
 
-  // file upload
+  // upload
   $("csv1").onchange = (e)=>{
     const f=e.target.files[0];
     if(!f) return;
@@ -540,7 +635,5 @@ html = r"""
 </html>
 """
 
-# inject sample
 html = html.replace("__INJECT_SAMPLE_CSV__", SAMPLE_CSV.replace("`","\\`"))
-
 components.html(html, height=4200, scrolling=True)
