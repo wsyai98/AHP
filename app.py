@@ -1,375 +1,360 @@
 # app.py
 from __future__ import annotations
 
-from io import StringIO
-from typing import Dict, List, Tuple
+import io
+import math
+from pathlib import Path
+from typing import Tuple, Optional
+
 import numpy as np
 import pandas as pd
 import streamlit as st
 
+# ---------------- Page config ----------------
+st.set_page_config(page_title="AHP (Saaty) — Step-by-Step (GM + Consistency)", layout="wide")
 
-# ------------------------- Config -------------------------
-st.set_page_config(page_title="AHP (Saaty) — CSV Labels + Auto Calculation", layout="wide")
-
-st.title("AHP (Saaty Scale) — Auto Calculation from Your Pairwise Judgements")
-st.caption(
-    "Upload CSV to detect Alternatives & Criteria (labels). "
-    "Then fill pairwise comparisons using Saaty left/equal/right. "
-    "App computes weights, consistency (CR), and final ranking."
+# ---------------- Styling (purple pastel-ish) ----------------
+st.markdown(
+    """
+<style>
+  .stApp {
+    background:
+      radial-gradient(1200px 600px at 20% 0%, rgba(167,139,250,.22), transparent 55%),
+      radial-gradient(900px 500px at 85% 10%, rgba(196,181,253,.18), transparent 60%),
+      linear-gradient(180deg, #0b0b10 0%, #141227 55%, rgba(243,232,255,.25) 140%) !important;
+  }
+  [data-testid="stSidebar"] {
+    background: rgba(237, 233, 254, 0.08) !important;
+    backdrop-filter: blur(6px);
+  }
+  .block-container { padding-top: 1.25rem; }
+  .card {
+    border-radius: 16px;
+    padding: 16px;
+    border: 1px solid rgba(226,232,240,.25);
+    background: rgba(255,255,255,.06);
+    backdrop-filter: blur(8px);
+  }
+  .cardLight {
+    border-radius: 16px;
+    padding: 16px;
+    border: 1px solid rgba(226,232,240,.7);
+    background: rgba(255,255,255,.78);
+    color: #111;
+  }
+  .pill {
+    display: inline-block;
+    padding: 6px 10px;
+    border-radius: 999px;
+    border: 1px solid rgba(196,181,253,.9);
+    background: rgba(237,233,254,.75);
+    color: #111;
+    font-weight: 800;
+    font-size: 12px;
+    margin-right: 8px;
+    margin-bottom: 8px;
+  }
+  .ok { color: #16a34a; font-weight: 900; }
+  .bad { color: #dc2626; font-weight: 900; }
+</style>
+""",
+    unsafe_allow_html=True,
 )
 
-# Random Index (RI) table
-RI = {
+# ---------------- RI / SA table (Saaty) ----------------
+# (Paper uses SA for RI; same role)
+RI_TABLE = {
     1: 0.00, 2: 0.00, 3: 0.58, 4: 0.90, 5: 1.12, 6: 1.24, 7: 1.32, 8: 1.41, 9: 1.45, 10: 1.49,
     11: 1.51, 12: 1.48, 13: 1.56, 14: 1.57, 15: 1.59
 }
 
-SAATY_VALUES = [1, 2, 3, 4, 5, 6, 7, 8, 9]
+def approx_RI(m: int) -> float:
+    # For m > 15, common approximation: RI ≈ 1.98*(m-2)/m
+    # (same as paper mentions for SA when m > 15)
+    if m in RI_TABLE:
+        return RI_TABLE[m]
+    if m <= 2:
+        return 0.0
+    return 1.98 * (m - 2) / m
 
-
-# ------------------------- Core AHP math -------------------------
-def geometric_mean_weights(P: np.ndarray) -> np.ndarray:
+# ---------------- Helpers ----------------
+def parse_ratio(x) -> float:
     """
-    Geometric Mean method:
-      GM_i = (∏_j p_ij)^(1/m)
-      w_i  = GM_i / Σ GM
+    Accept: 3, 0.5, "1/3", "  2 / 5  "
+    Return float > 0, or raise ValueError.
+    """
+    if pd.isna(x):
+        raise ValueError("Empty cell detected.")
+    s = str(x).strip()
+    if s == "":
+        raise ValueError("Empty cell detected.")
+    s = s.replace("\\", "/")  # just in case user typed 1\3
+    if "/" in s:
+        parts = s.split("/")
+        if len(parts) != 2:
+            raise ValueError(f"Invalid fraction: {s}")
+        num = float(parts[0].strip())
+        den = float(parts[1].strip())
+        if den == 0:
+            raise ValueError(f"Division by zero fraction: {s}")
+        v = num / den
+    else:
+        v = float(s)
+
+    if not np.isfinite(v) or v <= 0:
+        raise ValueError(f"Value must be positive. Got: {s}")
+    return float(v)
+
+def read_pairwise_csv(uploaded_bytes: bytes) -> pd.DataFrame:
+    """
+    Try to read as CSV (comma) and TSV. Expect square matrix with labels.
+    First column should be row labels.
+    """
+    text = uploaded_bytes.decode("utf-8", errors="ignore")
+    # try comma
+    for sep in [",", "\t", ";"]:
+        try:
+            df = pd.read_csv(io.StringIO(text), sep=sep, header=0, index_col=0)
+            if df.shape[0] >= 2 and df.shape[0] == df.shape[1]:
+                return df
+        except Exception:
+            pass
+    raise ValueError("CSV format not recognized. Make sure it is a square pairwise matrix with row labels in first column.")
+
+def numeric_matrix_from_df(df_raw: pd.DataFrame) -> pd.DataFrame:
+    df = df_raw.copy()
+    # strip headers/index
+    df.columns = [str(c).strip() for c in df.columns]
+    df.index = [str(i).strip() for i in df.index]
+
+    # convert each cell via parse_ratio
+    mat = np.zeros(df.shape, dtype=float)
+    for i in range(df.shape[0]):
+        for j in range(df.shape[1]):
+            mat[i, j] = parse_ratio(df.iat[i, j])
+    return pd.DataFrame(mat, index=df.index, columns=df.columns)
+
+def check_square_labels(df: pd.DataFrame) -> Tuple[bool, str]:
+    if df.shape[0] != df.shape[1]:
+        return False, "Matrix is not square."
+    if list(df.index) != list(df.columns):
+        return False, "Row labels and column labels are not identical (recommended to match)."
+    return True, "OK"
+
+def check_reciprocal(P: np.ndarray, tol: float = 1e-6) -> Tuple[bool, float]:
+    """
+    Check p_ij * p_ji ≈ 1 for i!=j, diagonal ≈ 1.
+    Returns (ok, max_abs_error)
     """
     m = P.shape[0]
-    prod = np.prod(P, axis=1)
-    gm = prod ** (1.0 / m)
-    s = gm.sum()
-    return gm / (s if s != 0 else 1.0)
+    errs = []
+    for i in range(m):
+        errs.append(abs(P[i, i] - 1.0))
+        for j in range(i + 1, m):
+            errs.append(abs(P[i, j] * P[j, i] - 1.0))
+    max_err = float(max(errs)) if errs else 0.0
+    return (max_err <= tol), max_err
 
-
-def ahp_consistency(P: np.ndarray, w: np.ndarray) -> Tuple[float, float, float]:
+def ahp_geometric_mean(P: np.ndarray) -> Tuple[np.ndarray, np.ndarray, np.ndarray]:
     """
-    Consistency:
-      Pw
-      λ_i = (Pw)_i / w_i
-      λmax = average(λ_i)
-      CI = (λmax - m)/(m - 1)
-      CR = CI / RI
+    Step 2–4:
+    Pi_i = product of row
+    root_i = (Pi_i)^(1/m)
+    w_i = root_i / sum(root)
     """
     m = P.shape[0]
+    Pi = np.prod(P, axis=1)
+    root = Pi ** (1.0 / m)
+    s = root.sum()
+    if s == 0:
+        raise ValueError("Sum of roots is zero (unexpected). Check matrix values.")
+    w = root / s
+    return Pi, root, w
+
+def ahp_consistency(P: np.ndarray, w: np.ndarray) -> Tuple[np.ndarray, np.ndarray, float, float, float]:
+    """
+    Step 5–7:
+    Pw, lambda_i, lambda_max, SI, CR
+    """
     Pw = P @ w
     lam = Pw / np.where(w == 0, 1e-18, w)
     lam_max = float(np.mean(lam))
-    if m <= 2:
-        return lam_max, 0.0, 0.0
-    ci = (lam_max - m) / (m - 1)
-    ri = RI.get(m, (1.98 * (m - 2) / m))  # approx if m>15
-    cr = 0.0 if ri == 0 else ci / ri
-    return lam_max, float(ci), float(cr)
+    m = P.shape[0]
+    if m <= 1:
+        SI = 0.0
+    else:
+        SI = (lam_max - m) / (m - 1)
+    RI = approx_RI(m)
+    CR = 0.0 if RI == 0 else SI / RI
+    return Pw, lam, lam_max, SI, CR
 
+# ---------------- Sample CSV (your B1..B7 example) ----------------
+SAMPLE = """B,B1,B2,B3,B4,B5,B6,B7
+B1,1,1/2,1/3,1/3,1/3,1/5,1
+B2,2,1,1/3,1,1/3,1/5,1
+B3,3,3,1,3,1,1,1
+B4,3,1,1/3,1,1/3,1/3,1/3
+B5,3,3,1,3,1,1,1
+B6,5,5,1,3,1,1,1
+B7,1,1,1,3,1,1,1
+"""
 
-def empty_pairwise(names: List[str]) -> np.ndarray:
-    n = len(names)
-    P = np.ones((n, n), dtype=float)
-    return P
+# ---------------- UI ----------------
+st.markdown("## AHP (Saaty) — Step-by-Step (Geometric Mean + Consistency)")
+st.caption("Input: **CSV pairwise comparison matrix** (no alternatives). Output: **weights, Pω, λmax, SI, CR**.")
 
+left, right = st.columns([1, 1.2], gap="large")
 
-def apply_saaty_choice(P: np.ndarray, i: int, j: int, direction: str, value: int) -> None:
-    """
-    direction:
-      - "Left (i more important)"  -> a_ij = value
-      - "Equal"                    -> a_ij = 1
-      - "Right (j more important)" -> a_ij = 1/value
-    Always enforce reciprocity and diagonal=1.
-    """
-    if i == j:
-        P[i, j] = 1.0
-        return
-
-    if direction == "Equal":
-        a = 1.0
-    elif direction.startswith("Left"):
-        a = float(value)
-    else:  # Right
-        a = 1.0 / float(value)
-
-    P[i, j] = a
-    P[j, i] = 1.0 / a
-    P[i, i] = 1.0
-    P[j, j] = 1.0
-
-
-def matrix_to_df(P: np.ndarray, names: List[str], decimals: int = 4) -> pd.DataFrame:
-    df = pd.DataFrame(P, index=names, columns=names)
-    return df.round(decimals)
-
-
-# ------------------------- UI helpers -------------------------
-def init_state_pairwise(key: str, names: List[str]) -> None:
-    if key not in st.session_state or st.session_state.get(key + "_names") != names:
-        st.session_state[key] = empty_pairwise(names)
-        st.session_state[key + "_names"] = names
-
-
-def render_pairwise_form(
-    key_prefix: str,
-    names: List[str],
-    title: str,
-    help_text: str,
-) -> np.ndarray:
-    """
-    Renders pairwise comparisons for items in `names`.
-    Stores/reads matrix in st.session_state[key_prefix].
-    Returns numeric pairwise matrix.
-    """
-    init_state_pairwise(key_prefix, names)
-    P = st.session_state[key_prefix]
-
-    st.subheader(title)
-    st.caption(help_text)
-
-    n = len(names)
-    if n < 2:
-        st.info("Need at least 2 items to compare.")
-        return P
-
-    # For each pair (i<j) provide: direction + value
-    for i in range(n):
-        for j in range(i + 1, n):
-            pair_key = f"{key_prefix}_pair_{i}_{j}"
-
-            # Defaults: if existing P has a_ij not 1, infer direction/value
-            aij = float(P[i, j])
-            if np.isclose(aij, 1.0):
-                default_dir = "Equal"
-                default_val = 1
-            elif aij > 1:
-                default_dir = "Left (i more important)"
-                # clamp to Saaty 1..9 if user previously used non-Saaty (shouldn't)
-                default_val = int(min(9, max(1, round(aij))))
-            else:
-                default_dir = "Right (j more important)"
-                inv = 1.0 / aij
-                default_val = int(min(9, max(1, round(inv))))
-
-            c1, c2, c3 = st.columns([2.3, 1.2, 2.3])
-            with c1:
-                st.markdown(f"**{names[i]}**  vs  **{names[j]}**")
-                direction = st.radio(
-                    "Direction",
-                    options=["Left (i more important)", "Equal", "Right (j more important)"],
-                    index=["Left (i more important)", "Equal", "Right (j more important)"].index(default_dir),
-                    horizontal=True,
-                    key=f"{pair_key}_dir",
-                    label_visibility="collapsed",
-                )
-            with c2:
-                value = st.selectbox(
-                    "Saaty",
-                    options=SAATY_VALUES,
-                    index=SAATY_VALUES.index(default_val),
-                    key=f"{pair_key}_val",
-                    label_visibility="collapsed",
-                )
-            with c3:
-                # Show what will be placed into matrix
-                if direction == "Equal":
-                    shown = "aᵢⱼ = 1  and  aⱼᵢ = 1"
-                elif direction.startswith("Left"):
-                    shown = f"aᵢⱼ = {value}  and  aⱼᵢ = 1/{value}"
-                else:
-                    shown = f"aᵢⱼ = 1/{value}  and  aⱼᵢ = {value}"
-                st.write(shown)
-
-            apply_saaty_choice(P, i, j, direction, int(value))
-
-    st.session_state[key_prefix] = P
-
-    st.markdown("**Current pairwise matrix (auto reciprocal):**")
-    st.dataframe(matrix_to_df(P, names, decimals=4), use_container_width=True)
-
-    return P
-
-
-# ------------------------- Sidebar: CSV Upload -------------------------
-sample_csv = (
-    "Alternative,B1,B2,B3,B4,B5,B6,B7\n"
-    "A1,0,0,0,0,0,0,0\n"
-    "A2,0,0,0,0,0,0,0\n"
-    "A3,0,0,0,0,0,0,0\n"
-    "A4,0,0,0,0,0,0,0\n"
-    "A5,0,0,0,0,0,0,0\n"
-)
-
-with st.sidebar:
-    st.header("Step 1 — Upload CSV")
+with left:
+    st.markdown('<div class="card">', unsafe_allow_html=True)
+    st.markdown("### Step 1 — Upload CSV (Pairwise Matrix P)")
+    st.write("CSV mesti **square** (m×m), ada **row label** pada kolum pertama, dan value boleh `1/3`.")
     st.download_button(
-        "Download sample CSV (labels only)",
-        data=sample_csv,
-        file_name="sample_labels.csv",
+        "⬇️ Download Sample CSV",
+        data=SAMPLE.encode("utf-8"),
+        file_name="sample_pairwise_matrix.csv",
         mime="text/csv",
         use_container_width=True,
     )
-    up = st.file_uploader("Upload your CSV", type=["csv"])
-    st.markdown("---")
-    st.write("CSV rules:")
-    st.markdown(
-        "- First column = `Alternative`\n"
-        "- Other columns = criteria names (B1..B7 etc.)\n"
-        "- Values are **ignored** (labels only) because you use Saaty judgements."
+    uploaded = st.file_uploader("📤 Choose CSV", type=["csv", "txt"])
+    st.markdown('</div>', unsafe_allow_html=True)
+
+    st.markdown('<div class="card" style="margin-top:14px;">', unsafe_allow_html=True)
+    st.markdown("### Nota pasal ‘benefit/cost’")
+    st.write(
+        "Dalam **AHP untuk weight kriteria**, kau compare **kepentingan** kriteria guna skala Saaty. "
+        "Label benefit/cost tu biasanya masuk **masa evaluate alternatives** (bukan masa bina weight kriteria)."
     )
+    st.markdown('</div>', unsafe_allow_html=True)
 
-if up is None:
-    st.info("Upload a CSV to begin.")
+with right:
+    st.markdown('<div class="cardLight">', unsafe_allow_html=True)
+    st.markdown("### Output akan keluar di sini (Step 2–7)")
+    st.markdown(
+        '<span class="pill">Step 2: Validate matrix</span>'
+        '<span class="pill">Step 3: Row products Π</span>'
+        '<span class="pill">Step 4: Roots & weights ω</span>'
+        '<span class="pill">Step 5: Pω</span>'
+        '<span class="pill">Step 6: λᵢ & λmax</span>'
+        '<span class="pill">Step 7: SI & CR</span>',
+        unsafe_allow_html=True,
+    )
+    st.markdown('</div>', unsafe_allow_html=True)
+
+# ---------------- Run computation if file exists ----------------
+if uploaded is None:
+    st.info("Upload CSV dulu. Kalau nak test cepat, download sample dan upload balik.")
     st.stop()
 
-raw = up.getvalue().decode("utf-8", errors="replace")
-df = pd.read_csv(StringIO(raw))
+try:
+    df_raw = read_pairwise_csv(uploaded.getvalue())
+    df_num = numeric_matrix_from_df(df_raw)
 
-if df.shape[1] < 3:
-    st.error("CSV needs at least: Alternative + 2 criteria columns.")
+    ok_lbl, msg_lbl = check_square_labels(df_num)
+    P = df_num.values.astype(float)
+    m = P.shape[0]
+
+    # Step 2: validate
+    recip_ok, recip_err = check_reciprocal(P, tol=1e-6)
+
+    # Step 3-4: weights
+    Pi, root, w = ahp_geometric_mean(P)
+
+    # Step 5-7: consistency
+    Pw, lam, lam_max, SI, CR = ahp_consistency(P, w)
+
+except Exception as e:
+    st.error(f"Error reading/calculating: {e}")
     st.stop()
 
-# Ensure Alternative column exists in col0
-cols_lower = [c.strip().lower() for c in df.columns]
-if cols_lower[0] != "alternative":
-    if "alternative" in cols_lower:
-        idx = cols_lower.index("alternative")
-        cols = list(df.columns)
-        alt_col = cols.pop(idx)
-        cols = [alt_col] + cols
-        df = df[cols]
+# ---------------- Display step-by-step ----------------
+st.markdown("### Step 2 — Detected Matrix P (numeric)")
+c1, c2 = st.columns([1, 1])
+with c1:
+    st.write(f"**Matrix size:** m = {m}")
+    if not ok_lbl:
+        st.warning(msg_lbl + " (App masih boleh kira, tapi lebih kemas kalau label sama.)")
     else:
-        df = df.rename(columns={df.columns[0]: "Alternative"})
+        st.success("Row/column labels match ✓")
 
-alt_col = df.columns[0]
-criteria = list(df.columns[1:])
-alternatives = df[alt_col].astype(str).tolist()
+with c2:
+    if recip_ok:
+        st.success("Reciprocal check OK: pᵢⱼ·pⱼᵢ ≈ 1 and diagonal ≈ 1 ✓")
+    else:
+        st.warning(f"Reciprocal check not perfect (max error ≈ {recip_err:.2e}). "
+                   "Kalau kau memang isi full matrix, pastikan pji = 1/pij dan diagonal = 1.")
 
-st.subheader("Detected labels from CSV")
-cL, cR = st.columns([2, 1])
-with cL:
-    st.write("**Alternatives**")
-    st.write(alternatives)
-with cR:
-    st.write("**Criteria**")
-    st.write(criteria)
+st.dataframe(df_num.style.format("{:.6g}"), use_container_width=True)
 
+st.markdown("### Step 3 — Products of row elements (Πᵢ)")
+df_step3 = pd.DataFrame({"Π_i (row product)": Pi}, index=df_num.index)
+st.dataframe(df_step3.style.format("{:.6g}"), use_container_width=True)
 
-# ------------------------- Step 2: Criteria pairwise -------------------------
-P_crit = render_pairwise_form(
-    key_prefix="P_CRITERIA",
-    names=criteria,
-    title="Step 2 — Pairwise comparison for CRITERIA (Saaty)",
-    help_text=(
-        "Fill all pairs using Saaty scale (1–9) with Left / Equal / Right. "
-        "Diagonal is 1, lower triangle auto reciprocal."
-    ),
+st.markdown("### Step 4 — m-th root and normalized weights (ω)")
+df_step4 = pd.DataFrame(
+    {
+        "root_i = (Π_i)^(1/m)": root,
+        "ω_i = root_i / Σroot": w,
+    },
+    index=df_num.index,
+)
+st.dataframe(df_step4.style.format({"root_i = (Π_i)^(1/m)": "{:.6g}", "ω_i = root_i / Σroot": "{:.9f}"}),
+             use_container_width=True)
+
+st.markdown("### Step 5 — Multiply matrix by weights: Pω")
+df_step5 = pd.DataFrame({"(Pω)_i": Pw}, index=df_num.index)
+st.dataframe(df_step5.style.format("{:.9f}"), use_container_width=True)
+
+st.markdown("### Step 6 — λᵢ = (Pω)ᵢ / ωᵢ and λmax (average)")
+df_step6 = pd.DataFrame(
+    {
+        "λ_i": lam,
+    },
+    index=df_num.index,
+)
+st.dataframe(df_step6.style.format("{:.9f}"), use_container_width=True)
+st.write(f"**λmax = average(λᵢ) = {lam_max:.9f}**")
+
+st.markdown("### Step 7 — Consistency Index (SI) and Consistency Ratio (CR)")
+RI = approx_RI(m)
+ok = CR <= 0.10
+
+st.markdown(
+    f"""
+<div class="cardLight">
+  <div><b>m</b> = {m}</div>
+  <div><b>RI (SA)</b> = {RI:.4f}</div>
+  <div><b>SI</b> = (λmax − m)/(m − 1) = <b>{SI:.9f}</b></div>
+  <div><b>CR</b> = SI/RI = <b>{CR:.9f}</b>
+    &nbsp;→&nbsp; {'<span class="ok">ACCEPTABLE (≤ 0.10)</span>' if ok else '<span class="bad">NOT OK (> 0.10)</span>'}
+  </div>
+</div>
+""",
+    unsafe_allow_html=True,
 )
 
-# Compute criteria weights + CR
-w_crit = geometric_mean_weights(P_crit)
-lam_max_c, ci_c, cr_c = ahp_consistency(P_crit, w_crit)
+# ---------------- Export results ----------------
+st.markdown("### Export")
+out = pd.DataFrame(
+    {
+        "Π_i": Pi,
+        "root_i": root,
+        "ω_i": w,
+        "(Pω)_i": Pw,
+        "λ_i": lam,
+    },
+    index=df_num.index,
+)
+csv_bytes = out.to_csv(index=True).encode("utf-8")
+st.download_button(
+    "⬇️ Download Results (CSV)",
+    data=csv_bytes,
+    file_name="ahp_results_step_by_step.csv",
+    mime="text/csv",
+    use_container_width=True,
+)
 
-st.markdown("---")
-st.subheader("Step 3 — Criteria weights ω and consistency")
-wcrit_df = pd.DataFrame({"Criterion": criteria, "Weight ω": w_crit})
-wcrit_df["Rank"] = wcrit_df["Weight ω"].rank(ascending=False, method="dense").astype(int)
-wcrit_df = wcrit_df.sort_values(["Rank", "Weight ω"], ascending=[True, False])
-st.dataframe(wcrit_df, use_container_width=True)
-
-ok_c = cr_c <= 0.10
-st.write(f"λmax = **{lam_max_c:.6f}**, CI = **{ci_c:.6f}**, CR = **{cr_c:.6f}** → "
-         f"{'✅ OK (≤ 0.10)' if ok_c else '❌ NOT OK (> 0.10)'}")
-if not ok_c:
-    st.warning("CR criteria > 0.10. Adjust your judgements (upper pairs) until CR ≤ 0.10.")
-
-
-# ------------------------- Step 4: Alternatives pairwise per criterion -------------------------
-st.markdown("---")
-st.subheader("Step 4 — Pairwise comparison for ALTERNATIVES under each criterion (Saaty)")
 st.caption(
-    "For each criterion, compare Alternatives using the same Saaty left/equal/right. "
-    "App will compute local weights and local CR per criterion."
-)
-
-local_weights: Dict[str, np.ndarray] = {}
-local_cr: Dict[str, float] = {}
-
-for k, crit_name in enumerate(criteria):
-    with st.expander(f"Fill pairwise for alternatives under: {crit_name}", expanded=(k == 0)):
-        P_alt = render_pairwise_form(
-            key_prefix=f"P_ALT_{crit_name}",
-            names=alternatives,
-            title=f"{crit_name}: Alternatives pairwise matrix",
-            help_text="Compare alternatives (A1 vs A2, etc.) using Saaty scale. Auto reciprocal is enforced.",
-        )
-        w_alt = geometric_mean_weights(P_alt)
-        lam_max_a, ci_a, cr_a = ahp_consistency(P_alt, w_alt)
-
-        local_weights[crit_name] = w_alt
-        local_cr[crit_name] = cr_a
-
-        show = pd.DataFrame({"Alternative": alternatives, f"Local weight under {crit_name}": w_alt})
-        show["Rank"] = show[f"Local weight under {crit_name}"].rank(ascending=False, method="dense").astype(int)
-        show = show.sort_values(["Rank", f"Local weight under {crit_name}"], ascending=[True, False])
-        st.dataframe(show, use_container_width=True)
-
-        ok_a = cr_a <= 0.10
-        st.write(f"Local CR for **{crit_name}**: **{cr_a:.6f}** → "
-                 f"{'✅ OK (≤ 0.10)' if ok_a else '❌ NOT OK (> 0.10)'}")
-        if not ok_a:
-            st.warning(f"CR for {crit_name} > 0.10. Revise judgements for this criterion.")
-
-
-# ------------------------- Step 5: Final synthesis -------------------------
-st.markdown("---")
-st.subheader("Step 5 — Final ranking (AHP synthesis)")
-
-# Build local weight matrix (alternatives x criteria)
-LW = np.column_stack([local_weights[c] for c in criteria])  # shape: n_alt x n_crit
-wc = w_crit.reshape(-1)  # n_crit
-
-scores = LW @ wc  # n_alt
-final = pd.DataFrame({"Alternative": alternatives, "Score": scores})
-final["Rank"] = final["Score"].rank(ascending=False, method="dense").astype(int)
-final = final.sort_values(["Rank", "Score"], ascending=[True, False])
-
-st.dataframe(final, use_container_width=True)
-
-st.caption("Score(Aᵢ) = Σ_k  (criteria_weight_k × local_weight_of_Aᵢ_under_criterion_k)")
-
-# Show local CR summary
-with st.expander("Consistency summary (CR)"):
-    rows = [{"Matrix": "CRITERIA", "CR": cr_c, "OK (≤0.10)": cr_c <= 0.10}]
-    for c in criteria:
-        rows.append({"Matrix": f"ALT under {c}", "CR": float(local_cr[c]), "OK (≤0.10)": float(local_cr[c]) <= 0.10})
-    st.dataframe(pd.DataFrame(rows), use_container_width=True)
-
-
-# ------------------------- Downloads -------------------------
-st.markdown("---")
-st.subheader("Download outputs")
-
-# Criteria weights
-st.download_button(
-    "Download criteria weights CSV",
-    data=wcrit_df.to_csv(index=False),
-    file_name="criteria_weights.csv",
-    mime="text/csv",
-    use_container_width=True,
-)
-
-# Local weights (alts x criteria)
-local_df = pd.DataFrame(LW, columns=criteria)
-local_df.insert(0, "Alternative", alternatives)
-st.download_button(
-    "Download local weights CSV",
-    data=local_df.to_csv(index=False),
-    file_name="local_weights.csv",
-    mime="text/csv",
-    use_container_width=True,
-)
-
-# Final ranking
-st.download_button(
-    "Download final ranking CSV",
-    data=final.to_csv(index=False),
-    file_name="final_ranking.csv",
-    mime="text/csv",
-    use_container_width=True,
+    "Kiraan ikut kaedah **Geometric Mean**: product row → m-th root → normalize; "
+    "kemudian kira λmax, SI dan CR (acceptable jika CR ≤ 0.10)."
 )
