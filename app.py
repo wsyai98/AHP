@@ -1,610 +1,409 @@
 # app.py
-from pathlib import Path
+from __future__ import annotations
+
+import math
+from dataclasses import dataclass
+from io import StringIO
+from typing import Dict, List, Tuple
+
+import numpy as np
+import pandas as pd
 import streamlit as st
-import streamlit.components.v1 as components
 
-st.set_page_config(page_title="AHP Step-by-Step (Paper / GM + Consistency)", layout="wide")
-APP_DIR = Path(__file__).resolve().parent
 
-# ---------- Single source of truth for the sample CSV ----------
-def load_sample_csv_text() -> str:
-    p = Path("/mnt/data/sample (1).csv")
-    if p.exists():
-        for enc in ("utf-8", "latin-1"):
-            try:
-                return p.read_text(encoding=enc)
-            except Exception:
-                pass
-    # fallback
-    return (
-        "Alternative,Cost,Quality,Delivery\n"
-        "A1,200,8,4\n"
-        "A2,250,7,5\n"
-        "A3,300,9,6\n"
-        "A4,220,8,4\n"
-        "A5,180,6,7\n"
-    )
-
-SAMPLE_CSV = load_sample_csv_text()
-
-def escape_for_js_template_literal(s: str) -> str:
-    # Avoid breaking JS template literal: backslashes, backticks, and ${ interpolation
-    return s.replace("\\", "\\\\").replace("`", "\\`").replace("${", "\\${")
-
-SAFE_SAMPLE_CSV = escape_for_js_template_literal(SAMPLE_CSV)
-
-# ---------- base page background (purple pastel) ----------
-st.markdown(
-    """
-<style>
-  .stApp {
-    background:
-      radial-gradient(1200px 600px at 20% 0%, rgba(167,139,250,.22), transparent 55%),
-      radial-gradient(900px 500px at 85% 10%, rgba(196,181,253,.18), transparent 60%),
-      linear-gradient(180deg, #0b0b10 0%, #141227 55%, rgba(243,232,255,.25) 140%) !important;
-  }
-  [data-testid="stSidebar"] {
-    background: rgba(237, 233, 254, 0.08) !important;
-    backdrop-filter: blur(6px);
-  }
-</style>
-""",
-    unsafe_allow_html=True,
+# --------------------------- Page config ---------------------------
+st.set_page_config(
+    page_title="AHP Auto Calculator (CSV → Pairwise → Weights → Consistency)",
+    layout="wide",
 )
 
-# ------------------------------- HTML APP -------------------------------
-html = r"""
-<!doctype html>
-<html lang="en">
-<head>
-<meta charset="utf-8"/>
-<meta name="viewport" content="width=device-width,initial-scale=1"/>
-<title>AHP Step-by-Step (Paper)</title>
+st.title("AHP Auto Calculator (CSV upload)")
+st.caption(
+    "CSV: first column = Alternative, other columns = criteria (numeric). "
+    "App auto-builds pairwise for alternatives using ratios, and you fill pairwise for criteria."
+)
 
-<style>
-  :root{
-    --bg1:#0b0b10;
-    --bg2:#141227;
-    --lav:#f3e8ff;
-    --lav2:#e9d5ff;
-    --vio:#c4b5fd;
-    --vio2:#a78bfa;
-    --vio3:#8b5cf6;
-    --text:#f8fafc;
 
-    --cardDark: rgba(18,16,35,.78);
-    --cardLight: rgba(255,255,255,.78);
+# --------------------------- Helpers ---------------------------
+RI: Dict[int, float] = {
+    1: 0.00, 2: 0.00, 3: 0.58, 4: 0.90, 5: 1.12, 6: 1.24, 7: 1.32, 8: 1.41, 9: 1.45, 10: 1.49,
+    11: 1.51, 12: 1.48, 13: 1.56, 14: 1.57, 15: 1.59
+}
 
-    --bdDark:#2c2a45;
-    --bdLight:#e5e7eb;
+def parse_ratio(x) -> float:
+    """
+    Parse:
+      - numbers (int/float)
+      - strings: "3", "0.5", "1/3"
+    Returns float or raises ValueError.
+    """
+    if pd.isna(x):
+        raise ValueError("Empty cell")
+    if isinstance(x, (int, float, np.integer, np.floating)):
+        v = float(x)
+        if not np.isfinite(v) or v <= 0:
+            raise ValueError("Non-positive / invalid number")
+        return v
 
-    --btn:#a78bfa;
-    --btnBd:#8b5cf6;
-  }
+    s = str(x).strip()
+    if s == "":
+        raise ValueError("Empty cell")
 
-  *{box-sizing:border-box}
-  html,body{height:100%;margin:0}
-  body{font-family:ui-sans-serif,system-ui,-apple-system,"Segoe UI",Roboto,Arial}
+    if "/" in s:
+        parts = s.split("/")
+        if len(parts) != 2:
+            raise ValueError(f"Bad fraction: {s}")
+        num = float(parts[0].strip())
+        den = float(parts[1].strip())
+        if den == 0:
+            raise ValueError("Denominator zero")
+        v = num / den
+    else:
+        v = float(s)
 
-  body.theme-dark{
-    color:var(--text);
-    background: radial-gradient(1200px 600px at 20% 0%, rgba(167,139,250,.25), transparent 55%),
-                radial-gradient(900px 500px at 85% 10%, rgba(196,181,253,.22), transparent 60%),
-                linear-gradient(180deg, var(--bg1) 0%, var(--bg2) 55%, rgba(243,232,255,.28) 140%);
-  }
-  body.theme-light{
-    color:#111;
-    background: radial-gradient(1100px 520px at 15% 0%, rgba(167,139,250,.25), transparent 55%),
-                radial-gradient(900px 460px at 85% 10%, rgba(196,181,253,.20), transparent 60%),
-                linear-gradient(180deg, #fbfaff 0%, #f8fafc 55%, var(--lav) 140%);
-  }
+    if not np.isfinite(v) or v <= 0:
+        raise ValueError("Non-positive / invalid number")
+    return v
 
-  .container{max-width:1200px;margin:24px auto;padding:0 16px}
-  .header{display:flex;align-items:center;justify-content:space-between;margin-bottom:12px;gap:12px;flex-wrap:wrap}
-  .title{
-    font-weight:900;
-    font-size:28px;
-    letter-spacing:.3px;
-    color: var(--lav);
-    text-shadow: 0 10px 28px rgba(167,139,250,.22);
-    white-space:nowrap;
-  }
-  body.theme-light .title{color:#111;text-shadow:none}
 
-  .row{display:flex;gap:10px;align-items:center;flex-wrap:wrap}
-  .btn{
-    display:inline-flex;align-items:center;gap:8px;
-    padding:10px 14px;border-radius:14px;
-    border:1px solid var(--btnBd);
-    background: linear-gradient(180deg, var(--btn) 0%, var(--vio2) 100%);
-    color:#fff;cursor:pointer;
-    box-shadow: 0 12px 24px rgba(139,92,246,.18);
-    text-decoration:none;
-    font-weight:800;
-  }
-  .btn:hover{filter:brightness(0.98); transform: translateY(-.5px)}
-  .toggle{
-    padding:8px 12px;border-radius:14px;
-    border:1px solid var(--bdDark);
-    background: rgba(255,255,255,.06);
-    color:#eee;cursor:pointer;
-    font-weight:800;
-  }
-  body.theme-light .toggle{background:#fff;color:#111;border-color:#cbd5e1}
+def geometric_mean_weights(P: np.ndarray) -> np.ndarray:
+    """
+    Geometric Mean method:
+      Π_i = ∏_j p_ij
+      GM_i = (Π_i)^(1/m)
+      w_i = GM_i / Σ GM
+    Matches the standard approximate method in AHP literature. :contentReference[oaicite:2]{index=2}
+    """
+    m = P.shape[0]
+    prod = np.prod(P, axis=1)
+    gm = prod ** (1.0 / m)
+    s = gm.sum()
+    return gm / (s if s != 0 else 1.0)
 
-  .grid{display:grid;gap:16px;grid-template-columns:1fr}
-  @media (min-width:1024px){.grid{grid-template-columns:1fr 2fr}}
 
-  .card{
-    border-radius:18px;padding:18px;
-    border:1px solid var(--bdLight);
-    backdrop-filter: blur(8px);
-  }
-  .card.dark{background:var(--cardDark);color:#e5e7eb;border-color:var(--bdDark)}
-  .card.light{background:var(--cardLight);color:#111;border-color:var(--bdLight)}
-  body.theme-light .card.dark{background:#fff;color:#111;border-color:#e5e7eb}
+def matvec(P: np.ndarray, w: np.ndarray) -> np.ndarray:
+    return P @ w
 
-  .section-title{
-    font-weight:900;font-size:18px;margin-bottom:12px;
-    color: var(--lav2);
-  }
-  body.theme-light .section-title{color:#4c1d95}
 
-  .hint{font-size:12px;opacity:.85}
-  .mini{font-size:12px;opacity:.92;line-height:1.55}
+def ahp_consistency(P: np.ndarray, w: np.ndarray) -> Tuple[float, float, float]:
+    """
+    Consistency:
+      Pw
+      λ_i = (Pw)_i / w_i
+      λmax = average(λ_i)
+      CI = (λmax - m)/(m - 1)
+      CR = CI / RI
+    """
+    m = P.shape[0]
+    Pw = matvec(P, w)
+    lam = Pw / np.where(w == 0, 1e-18, w)
+    lam_max = float(np.mean(lam))
+    if m <= 2:
+        return lam_max, 0.0, 0.0
+    ci = (lam_max - m) / (m - 1)
+    ri = RI.get(m, (1.98 * (m - 2) / m))  # fallback approx for m>15
+    cr = 0.0 if ri == 0 else ci / ri
+    return lam_max, float(ci), float(cr)
 
-  .table-wrap{overflow:auto;max-height:440px}
-  table{width:100%;border-collapse:collapse;font-size:14px;color:#111}
-  th,td{text-align:left;padding:8px 10px;border-bottom:1px solid #e5e7eb}
-  th{background:rgba(243,232,255,.65); position:sticky; top:0}
 
-  .pill{
-    display:inline-flex;align-items:center;gap:8px;
-    padding:6px 10px;border-radius:999px;
-    border:1px solid #c4b5fd;
-    background: rgba(237,233,254,.7);
-    margin:0 6px 6px 0;font-size:12px;color:#111;
-    font-weight:900;
-  }
+def build_pairwise_from_values(values: np.ndarray, criterion_type: str) -> np.ndarray:
+    """
+    Build pairwise matrix for alternatives from raw numeric values.
+      Benefit: a_ij = x_i / x_j
+      Cost:    a_ij = x_j / x_i
+    This creates an inverse-symmetric consistent matrix if all x > 0.
+    """
+    x = values.astype(float)
+    if np.any(~np.isfinite(x)) or np.any(x <= 0):
+        raise ValueError("All criterion values must be positive numbers (>0) to build ratio-based pairwise matrices.")
+    n = len(x)
+    P = np.ones((n, n), dtype=float)
+    for i in range(n):
+        for j in range(n):
+            if i == j:
+                P[i, j] = 1.0
+            else:
+                if criterion_type.lower().startswith("benefit"):
+                    P[i, j] = x[i] / x[j]
+                else:  # cost
+                    P[i, j] = x[j] / x[i]
+    return P
 
-  .ok{color:#16a34a;font-weight:900}
-  .bad{color:#dc2626;font-weight:900}
 
-  input.num{
-    width:100%;
-    padding:10px 12px;border-radius:12px;
-    border:1px solid #ddd;background:#fbfaff;color:#111;
-    outline:none;
-  }
-  input.num:focus{border-color:#8b5cf6; box-shadow:0 0 0 3px rgba(139,92,246,.12)}
-  .topbar{
-    display:flex; gap:10px; align-items:center; flex-wrap:wrap;
-    margin:8px 0 0;
-  }
-  .smallbtn{
-    display:inline-flex;align-items:center;gap:8px;
-    padding:8px 12px;border-radius:14px;
-    border:1px solid #cbd5e1;
-    background: rgba(255,255,255,.08);
-    color:inherit;cursor:pointer;
-    font-weight:800;
-  }
-  body.theme-light .smallbtn{background:#fff}
-</style>
-</head>
+def make_blank_criteria_pairwise(criteria: List[str]) -> pd.DataFrame:
+    m = len(criteria)
+    df = pd.DataFrame(np.ones((m, m), dtype=object), index=criteria, columns=criteria)
+    # Use empty strings above diagonal to encourage user input (but keep diagonal = 1).
+    for i in range(m):
+        for j in range(m):
+            if i == j:
+                df.iat[i, j] = "1"
+            elif i < j:
+                df.iat[i, j] = ""  # user fills
+            else:
+                df.iat[i, j] = ""  # auto later
+    return df
 
-<body class="theme-dark">
-<div class="container">
-  <div class="header">
-    <div class="title">AHP — Step-by-Step (Paper GM + Consistency)</div>
-    <div class="row">
-      <a class="btn" id="downloadSample">⬇️ Download Sample</a>
-      <button class="btn" id="loadSample">📄 Load Sample</button>
-      <button class="toggle" id="themeToggle">🌙 Dark</button>
-    </div>
-  </div>
 
-  <div class="grid">
-    <div>
-      <div class="card dark">
-        <div class="section-title">Step 1: Upload CSV (auto-detect criteria)</div>
-        <label for="csvAHP" class="btn">📤 Choose CSV</label>
-        <input id="csvAHP" type="file" accept=".csv" style="display:none"/>
-        <p class="hint">First column = <b>Alternative</b>. Other columns = criteria names.</p>
-      </div>
+def df_to_numeric_pairwise(df: pd.DataFrame) -> np.ndarray:
+    """
+    Convert editable DF into numeric pairwise matrix.
+    Rules:
+      - diagonal forced to 1
+      - for i<j: parse user cell
+      - for i>j: reciprocal of (j,i)
+    """
+    crit = list(df.index)
+    m = len(crit)
+    P = np.ones((m, m), dtype=float)
 
-      <div id="mCard" class="card light" style="display:none;margin-top:14px">
-        <div class="section-title">Detected Decision Matrix (preview)</div>
-        <div class="table-wrap"><table id="tblMatrix"></table></div>
-      </div>
+    for i in range(m):
+        for j in range(m):
+            if i == j:
+                P[i, j] = 1.0
+            elif i < j:
+                cell = df.iat[i, j]
+                v = parse_ratio(cell)
+                P[i, j] = v
+                P[j, i] = 1.0 / v
+    return P
 
-      <div id="critCard" class="card dark" style="display:none;margin-top:14px">
-        <div class="section-title">Step 2: Criteria detected (R₁…Rₘ)</div>
-        <div class="mini">Criteria list below is extracted automatically from your CSV header.</div>
-        <div id="critList" style="margin-top:10px"></div>
-      </div>
 
-      <div id="pairCard" class="card dark" style="display:none;margin-top:14px">
-        <div class="section-title">Step 3: Pairwise Comparison Matrix P (fill upper triangle)</div>
+# --------------------------- Sample CSV ---------------------------
+sample_csv = (
+    "Alternative,Cost,Quality,Delivery\n"
+    "A1,200,8,4\n"
+    "A2,250,7,5\n"
+    "A3,300,9,6\n"
+    "A4,220,8,4\n"
+    "A5,180,6,7\n"
+)
 
-        <div class="mini">
-          Fill only <b>upper triangle</b> (i &lt; j). Any <b>positive ratio</b> is allowed (e.g., 3, 0.5, 1/3).<br/>
-          Inverse-symmetry is auto: <b>pᵢⱼ = 1 / pⱼᵢ</b>. Diagonal is 1.<br/>
-          <b>Note:</b> Saaty 1–3–5–7–9 is only a guideline for fast input (not the computation formula).
-        </div>
+with st.sidebar:
+    st.header("Step 1 — Upload CSV")
+    st.download_button(
+        "Download sample CSV",
+        data=sample_csv,
+        file_name="sample_ahp.csv",
+        mime="text/csv",
+        use_container_width=True,
+    )
+    up = st.file_uploader("Upload your CSV", type=["csv"])
 
-        <div class="topbar">
-          <button class="smallbtn" id="fillSaaty">⚡ Fill Saaty template (upper)</button>
-          <span class="hint">Template will set all upper triangle to 1 (edit after).</span>
-        </div>
 
-        <div class="table-wrap" style="margin-top:10px"><table id="ahpMatrix"></table></div>
-        <div style="margin-top:10px" class="row">
-          <button class="btn" id="ahpSetOnes">↺ Set all to 1</button>
-          <button class="btn" id="ahpCompute">✅ Step 4–5: Compute ω (GM) & Consistency</button>
-        </div>
-      </div>
-    </div>
+# --------------------------- Step 1: Load CSV ---------------------------
+if up is None:
+    st.info("Upload a CSV (or download the sample) to start.")
+    st.stop()
 
-    <div>
-      <div id="resultCard" class="card light" style="display:none">
-        <div class="section-title">AHP Output</div>
+raw_text = up.getvalue().decode("utf-8", errors="replace")
+df = pd.read_csv(StringIO(raw_text))
 
-        <div class="pill">Step 4: Weights ω (Geometric Mean method)</div>
-        <div class="mini">
-          Compute by paper steps: <b>Πᵢ = ∏ⱼ pᵢⱼ</b>, <b>GMᵢ = (Πᵢ)^(1/m)</b>, then normalize <b>ωᵢ = GMᵢ / ΣGM</b>.
-        </div>
-        <div class="table-wrap" style="margin-top:10px"><table id="weightsTbl"></table></div>
+if df.shape[1] < 3:
+    st.error("CSV needs at least: Alternative + 2 criteria columns.")
+    st.stop()
 
-        <div style="margin-top:14px" class="pill">Step 5: Consistency (SI, S / CR)</div>
-        <div id="consBox" class="mini" style="margin-top:6px"></div>
+# Ensure first column is Alternative
+if df.columns[0].strip().lower() != "alternative":
+    # try find
+    cols_lower = [c.strip().lower() for c in df.columns]
+    if "alternative" in cols_lower:
+        idx = cols_lower.index("alternative")
+        cols = list(df.columns)
+        # move Alternative to first
+        alt = cols.pop(idx)
+        cols = [alt] + cols
+        df = df[cols]
+    else:
+        df = df.rename(columns={df.columns[0]: "Alternative"})
 
-        <div style="margin-top:14px" class="pill">Formulas used</div>
-        <div class="mini">
-          <b>Pω</b> computed directly.<br/>
-          <b>λᵢ = (Pω)ᵢ / ωᵢ</b>, <b>λmax = average(λᵢ)</b><br/>
-          <b>SI = (λmax − m)/(m − 1)</b><br/>
-          <b>S (CR) = SI / RI</b> (acceptable if <b>S ≤ 0.10</b>).
-        </div>
-      </div>
+alt_col = df.columns[0]
+criteria_cols = list(df.columns[1:])
+alts = df[alt_col].astype(str).tolist()
 
-      <div class="card dark" style="margin-top:16px">
-        <div class="section-title">Tip</div>
-        <div class="mini">
-          If <b>S (CR) &gt; 0.10</b>, revise the upper triangle values until <b>S ≤ 0.10</b>.
-        </div>
-      </div>
-    </div>
-  </div>
-</div>
+st.subheader("Detected decision matrix (from CSV)")
+st.dataframe(df, use_container_width=True)
 
-<script>
-(function(){
-  const $  = (id)=> document.getElementById(id);
-  const show = (el,on=true)=> el.style.display = on ? "" : "none";
+# Validate numeric criteria
+bad_cols = []
+for c in criteria_cols:
+    if not pd.to_numeric(df[c], errors="coerce").notna().all():
+        bad_cols.append(c)
+if bad_cols:
+    st.error(
+        "These criteria columns contain non-numeric / missing values (please clean the CSV): "
+        + ", ".join(bad_cols)
+    )
+    st.stop()
 
-  // ---------- theme ----------
-  let dark=true;
-  function applyTheme(){
-    document.body.classList.toggle('theme-dark', dark);
-    document.body.classList.toggle('theme-light', !dark);
-    $("themeToggle").textContent = dark ? "🌙 Dark" : "☀️ Light";
-  }
-  $("themeToggle").onclick = ()=>{ dark=!dark; applyTheme(); };
-  applyTheme();
+# Force numeric
+for c in criteria_cols:
+    df[c] = pd.to_numeric(df[c], errors="raise")
 
-  // ---------- injected by Python ----------
-  const SAMPLE_TEXT = `__INJECT_SAMPLE_CSV__`;
-  $("downloadSample").href = "data:text/csv;charset=utf-8," + encodeURIComponent(SAMPLE_TEXT);
-  $("downloadSample").download = "sample.csv";
-  $("loadSample").onclick = ()=> initAll(SAMPLE_TEXT);
 
-  // ---------- CSV parser ----------
-  function parseCSVText(text){
-    const rows=[]; let i=0, cur="", inQ=false, row=[];
-    const pushCell=()=>{ row.push(cur); cur=""; };
-    const pushRow =()=>{ rows.push(row); row=[]; };
-    while(i<text.length){
-      const ch=text[i];
-      if(inQ){
-        if(ch==='\"'){ if(text[i+1]==='\"'){ cur+='\"'; i++; } else { inQ=false; } }
-        else cur+=ch;
-      }else{
-        if(ch==='\"') inQ=true;
-        else if(ch===',') pushCell();
-        else if(ch==='\n'){ pushCell(); pushRow(); }
-        else if(ch==='\r'){/*ignore*/}
-        else cur+=ch;
-      }
-      i++;
-    }
-    pushCell(); if(row.length>1 || row[0] !== "") pushRow();
-    return rows;
-  }
+# --------------------------- Step 2: Criterion types ---------------------------
+st.subheader("Step 2 — Set criterion type (Benefit / Cost)")
+st.caption("This controls how the alternatives pairwise matrix is auto-generated from your CSV values.")
 
-  function renderPreviewTable(cols, rows){
-    const tb=$("tblMatrix"); tb.innerHTML="";
-    const thead=document.createElement("thead");
-    const trh=document.createElement("tr");
-    cols.forEach(c=>{ const th=document.createElement("th"); th.textContent=c; trh.appendChild(th); });
-    thead.appendChild(trh); tb.appendChild(thead);
-
-    const tbody=document.createElement("tbody");
-    rows.forEach(r=>{
-      const tr=document.createElement("tr");
-      cols.forEach((_,ci)=>{
-        const td=document.createElement("td");
-        td.textContent=String(r[ci] ?? "");
-        tr.appendChild(td);
-      });
-      tbody.appendChild(tr);
-    });
-    tb.appendChild(tbody);
-  }
-
-  // ---------- AHP state ----------
-  let header = [];
-  let crit = [];
-  let P = [];
-
-  // Random Consistency Index values (RI)
-  const RI = {
-    1:0.00, 2:0.00, 3:0.58, 4:0.90, 5:1.12, 6:1.24, 7:1.32, 8:1.41, 9:1.45, 10:1.49,
-    11:1.51, 12:1.48, 13:1.56, 14:1.57, 15:1.59
-  };
-
-  // Parse positive ratio (allow "1/3")
-  function parsePositiveNumberOrFraction(s){
-    s = String(s ?? "").trim();
-    if(!s) return NaN;
-    if(s.includes("/")){
-      const parts = s.split("/");
-      if(parts.length !== 2) return NaN;
-      const num = parseFloat(parts[0].trim());
-      const den = parseFloat(parts[1].trim());
-      if(isFinite(num) && isFinite(den) && den !== 0) return num/den;
-      return NaN;
-    }
-    const v = parseFloat(s);
-    return v;
-  }
-
-  function initAll(csvText){
-    const arr=parseCSVText(csvText);
-    if(!arr.length) return;
-
-    header = arr[0].map(x=> String(x??"").trim());
-    if(header[0] !== "Alternative"){
-      const idx = header.indexOf("Alternative");
-      if(idx>0){ const nm=header.splice(idx,1)[0]; header.unshift(nm); }
-      else header[0] = "Alternative";
-    }
-
-    crit = header.slice(1);
-    if(crit.length < 2){
-      alert("Need at least 2 criteria columns for AHP.");
-      return;
-    }
-
-    const previewRows = arr.slice(1, Math.min(arr.length, 11));
-    renderPreviewTable(header, previewRows);
-    show($("mCard"), true);
-
-    const cl = $("critList");
-    cl.innerHTML = "";
-    crit.forEach(c=>{
-      const pill=document.createElement("span");
-      pill.className="pill";
-      pill.textContent=c;
-      cl.appendChild(pill);
-    });
-    show($("critCard"), true);
-
-    buildPairwiseMatrix();
-    show($("pairCard"), true);
-    show($("resultCard"), false);
-  }
-
-  $("csvAHP").onchange = (e)=>{
-    const f=e.target.files[0]; if(!f) return;
-    const r=new FileReader();
-    r.onload = ()=> initAll(String(r.result));
-    r.readAsText(f);
-  };
-
-  function buildPairwiseMatrix(){
-    const m = crit.length;
-    P = Array.from({length:m}, (_,i)=> Array.from({length:m}, (_,j)=> (i===j?1:1)));
-
-    const tbl = $("ahpMatrix");
-    tbl.innerHTML = "";
-
-    const thead = document.createElement("thead");
-    const trh = document.createElement("tr");
-    trh.innerHTML = "<th>Criteria</th>" + crit.map(c=> `<th>${c}</th>`).join("");
-    thead.appendChild(trh);
-    tbl.appendChild(thead);
-
-    const tbody = document.createElement("tbody");
-    for(let i=0;i<m;i++){
-      const tr = document.createElement("tr");
-      const th = document.createElement("th");
-      th.textContent = crit[i];
-      tr.appendChild(th);
-
-      for(let j=0;j<m;j++){
-        const td = document.createElement("td");
-
-        if(i===j){
-          td.textContent = "1";
-        } else if(i < j){
-          const inp = document.createElement("input");
-          inp.className = "num";
-          inp.type = "text";
-          inp.value = "1";
-          inp.placeholder = "e.g. 3, 0.5, 1/3";
-
-          inp.oninput = ()=>{
-            const v = parsePositiveNumberOrFraction(inp.value);
-            if(!isFinite(v) || v <= 0){
-              inp.style.borderColor = "#dc2626";
-              return;
-            }
-            inp.style.borderColor = "#ddd";
-            P[i][j] = v;
-            P[j][i] = 1/v;
-
-            const mirror = tbody.children[j].children[i+1];
-            mirror.textContent = (1/v).toFixed(6);
-            show($("resultCard"), false);
-          };
-
-          td.appendChild(inp);
-        } else {
-          td.textContent = (P[i][j]).toFixed(6);
+colA, colB = st.columns([2, 1])
+with colA:
+    types_df = pd.DataFrame(
+        {
+            "Criterion": criteria_cols,
+            "Type": ["Cost" if "cost" in c.lower() else "Benefit" for c in criteria_cols],
         }
+    )
+    edited_types = st.data_editor(
+        types_df,
+        hide_index=True,
+        use_container_width=True,
+        column_config={
+            "Type": st.column_config.SelectboxColumn(
+                "Type",
+                options=["Benefit", "Cost"],
+                required=True,
+            )
+        },
+        key="types_editor",
+    )
+crit_types = dict(zip(edited_types["Criterion"], edited_types["Type"]))
 
-        tr.appendChild(td);
-      }
-      tbody.appendChild(tr);
-    }
-    tbl.appendChild(tbody);
+with colB:
+    st.write("Quick notes")
+    st.markdown(
+        "- **Benefit**: bigger value = better\n"
+        "- **Cost**: smaller value = better\n"
+        "- Values must be **> 0** for ratio-based pairwise."
+    )
 
-    $("fillSaaty").onclick = ()=>{
-      // only a template: sets all upper triangle inputs to 1 (user can edit to 3/5/7/9 etc.)
-      const inputs = tbl.querySelectorAll("input.num");
-      inputs.forEach(inp=>{
-        inp.value = "1";
-        inp.dispatchEvent(new Event("input"));
-      });
-      show($("resultCard"), false);
-    };
 
-    $("ahpSetOnes").onclick = ()=>{
-      const inputs = tbl.querySelectorAll("input.num");
-      inputs.forEach(inp=>{
-        inp.value = "1";
-        inp.dispatchEvent(new Event("input"));
-      });
-      show($("resultCard"), false);
-    };
+# --------------------------- Step 3: Criteria pairwise input ---------------------------
+st.subheader("Step 3 — Pairwise comparison for CRITERIA (fill upper triangle only)")
+st.caption("Enter values like 3, 0.5, 1/3. Diagonal is 1. Lower triangle is auto reciprocal.")
 
-    $("ahpCompute").onclick = ()=> computeAHP();
-  }
+if "crit_pw_df" not in st.session_state or st.session_state.get("crit_pw_cols") != criteria_cols:
+    st.session_state["crit_pw_df"] = make_blank_criteria_pairwise(criteria_cols)
+    st.session_state["crit_pw_cols"] = criteria_cols
 
-  // matrix-vector multiply
-  function matVec(A, x){
-    const m=A.length;
-    const y=new Array(m).fill(0);
-    for(let i=0;i<m;i++){
-      let s=0;
-      for(let j=0;j<m;j++) s += A[i][j]*x[j];
-      y[i]=s;
-    }
-    return y;
-  }
+crit_pw_df = st.session_state["crit_pw_df"]
 
-  function normalizeToSum1(x){
-    let s=0; for(const v of x) s += v;
-    s = s || 1;
-    return x.map(v=> v/s);
-  }
+edited_pw = st.data_editor(
+    crit_pw_df,
+    use_container_width=True,
+    key="crit_pw_editor",
+)
 
-  function computeAHP(){
-    const m = crit.length;
+# Update session state
+st.session_state["crit_pw_df"] = edited_pw
 
-    // Validate: all entries must be positive
-    for(let i=0;i<m;i++){
-      for(let j=0;j<m;j++){
-        if(!isFinite(P[i][j]) || P[i][j] <= 0){
-          alert("Invalid pairwise value detected. Ensure all p_ij are positive numbers (or fractions).");
-          return;
-        }
-      }
-    }
+compute_btn = st.button("✅ Compute AHP (criteria weights + alternative ranking)", type="primary")
 
-    // ---------------- Step 4 (Paper): Geometric Mean weights ----------------
-    // Πi = ∏ p_ij
-    // GM_i = (Πi)^(1/m)
-    // ω_i = GM_i / Σ GM
-    const Pi = new Array(m).fill(1);
-    for(let i=0;i<m;i++){
-      let prod = 1;
-      for(let j=0;j<m;j++){
-        prod *= P[i][j];
-      }
-      Pi[i] = prod;
-    }
-    const GM = Pi.map(v => Math.pow(v, 1/m));
-    const w  = normalizeToSum1(GM);
 
-    // ---------------- Step 5: Consistency ----------------
-    // Pw, λ_i = (Pw)_i / w_i, λmax = average(λ_i)
-    const Pw = matVec(P, w);
-    const lam = Pw.map((v,i)=> v/(w[i] || 1e-18));
-    const lamMax = lam.reduce((s,v)=> s+v, 0) / m;
+# --------------------------- Compute ---------------------------
+if not compute_btn:
+    st.stop()
 
-    const SI = (lamMax - m) / (m - 1);
-    const SA = (RI[m] !== undefined) ? RI[m] : (1.98*(m-2)/m); // approx if m>15
-    const S  = (SA === 0) ? 0 : (SI / SA);
+# Convert criteria pairwise to numeric
+try:
+    P_criteria = df_to_numeric_pairwise(edited_pw)
+except Exception as e:
+    st.error(f"Criteria pairwise matrix has invalid entry: {e}")
+    st.stop()
 
-    renderWeightsTable(w, Pw, lam, lamMax);
-    renderConsistency(m, lamMax, SI, SA, S);
+m = len(criteria_cols)
 
-    show($("resultCard"), true);
-  }
+# Step 4: Criteria weights (GM)
+w_criteria = geometric_mean_weights(P_criteria)
+lam_max_c, ci_c, cr_c = ahp_consistency(P_criteria, w_criteria)
 
-  function renderWeightsTable(w, Pw, lam, lamMax){
-    const tb = $("weightsTbl");
-    tb.innerHTML = "";
-    const thead = document.createElement("thead");
-    thead.innerHTML =
-      "<tr><th>Criterion</th><th>Weight ωᵢ</th><th>(Pω)ᵢ</th><th>λᵢ = (Pω)ᵢ/ωᵢ</th></tr>";
-    tb.appendChild(thead);
+st.divider()
+st.subheader("Step 4 — Criteria weights ω (Geometric Mean method)")
+wcrit_table = pd.DataFrame(
+    {"Criterion": criteria_cols, "Weight ω": w_criteria}
+).sort_values("Weight ω", ascending=False)
+st.dataframe(wcrit_table, use_container_width=True)
 
-    const tbody = document.createElement("tbody");
-    crit.forEach((c,i)=>{
-      const tr = document.createElement("tr");
-      tr.innerHTML =
-        `<td>${c}</td>
-         <td><b>${w[i].toFixed(6)}</b></td>
-         <td>${Pw[i].toFixed(6)}</td>
-         <td>${lam[i].toFixed(6)}</td>`;
-      tbody.appendChild(tr);
-    });
+st.subheader("Step 5 — Consistency (Criteria matrix)")
+ok = cr_c <= 0.10
+st.write(f"m = {m}")
+st.write(f"λmax = {lam_max_c:.6f}")
+st.write(f"CI = {ci_c:.6f}")
+st.write(f"CR = {cr_c:.6f}  →  {'✅ ACCEPTABLE (≤ 0.10)' if ok else '❌ NOT OK (> 0.10)'}")
 
-    const trf = document.createElement("tr");
-    trf.innerHTML =
-      `<td colspan="3" style="text-align:right"><b>λ<sub>max</sub></b></td>
-       <td><b>${lamMax.toFixed(6)}</b></td>`;
-    tbody.appendChild(trf);
+if not ok:
+    st.warning("CR > 0.10. Revise the upper triangle values of the criteria pairwise matrix and recompute.")
 
-    tb.appendChild(tbody);
-  }
+# --------------------------- Alternatives: auto pairwise per criterion ---------------------------
+st.divider()
+st.subheader("Step 6 — Auto pairwise for ALTERNATIVES (from CSV ratios) + local weights")
 
-  function renderConsistency(m, lamMax, SI, SA, S){
-    const box = $("consBox");
-    const ok = (S <= 0.10);
-    box.innerHTML =
-      `<div>m = <b>${m}</b></div>
-       <div>λ<sub>max</sub> = <b>${lamMax.toFixed(6)}</b></div>
-       <div>SI = (λ<sub>max</sub> − m)/(m − 1) = <b>${SI.toFixed(6)}</b></div>
-       <div>RI = <b>${SA.toFixed(2)}</b></div>
-       <div>S (CR) = SI/RI = <b>${S.toFixed(6)}</b> → ${ok ? "<span class='ok'>ACCEPTABLE (≤ 0.10)</span>" : "<span class='bad'>NOT OK (&gt; 0.10)</span>"}</div>
-       <div class="hint" style="margin-top:8px">If NOT OK: revise upper triangle values until S ≤ 0.10.</div>`;
-  }
+local_weights = {}
+local_cr = {}
 
-  // preload sample
-  initAll(SAMPLE_TEXT);
+for c in criteria_cols:
+    P_alt = build_pairwise_from_values(df[c].to_numpy(), crit_types[c])
+    w_alt = geometric_mean_weights(P_alt)
+    lam, ci, cr = ahp_consistency(P_alt, w_alt)  # should be ~0 for ratio-constructed matrices
+    local_weights[c] = w_alt
+    local_cr[c] = cr
 
-})();
-</script>
-</body>
-</html>
-"""
+# Show local weights table
+local_df = pd.DataFrame(local_weights, index=alts)
+local_df.insert(0, "Alternative", alts)
+st.dataframe(local_df.set_index("Alternative"), use_container_width=True)
 
-# Inject sample csv safely
-html = html.replace("__INJECT_SAMPLE_CSV__", SAFE_SAMPLE_CSV)
+with st.expander("Show consistency (CR) for each alternative-pairwise matrix"):
+    cr_rows = [{"Criterion": c, "Type": crit_types[c], "CR": float(local_cr[c])} for c in criteria_cols]
+    st.dataframe(pd.DataFrame(cr_rows).sort_values("CR", ascending=False), use_container_width=True)
+    st.caption("Because we build pairwise by exact ratios from data, CR is usually ~ 0.")
 
-# Render once (no duplicates)
-components.html(html, height=2600, scrolling=True)
+# --------------------------- Step 7: Synthesis (overall score) ---------------------------
+st.divider()
+st.subheader("Step 7 — Synthesis: overall ranking")
+# overall score = Σ (criteria_weight * local_weight_alt_under_criterion)
+Wc = np.array([w_criteria[criteria_cols.index(c)] for c in criteria_cols], dtype=float)
+scores = np.zeros(len(alts), dtype=float)
+
+for j, c in enumerate(criteria_cols):
+    scores += Wc[j] * np.array(local_weights[c], dtype=float)
+
+result = pd.DataFrame({"Alternative": alts, "Overall score": scores})
+result["Rank"] = result["Overall score"].rank(ascending=False, method="dense").astype(int)
+result = result.sort_values(["Rank", "Overall score"], ascending=[True, False])
+
+st.dataframe(result, use_container_width=True)
+
+# --------------------------- Downloads ---------------------------
+st.divider()
+st.subheader("Download outputs")
+out1 = wcrit_table.reset_index(drop=True)
+out2 = result.reset_index(drop=True)
+out3 = local_df.reset_index(drop=True)
+
+st.download_button(
+    "Download criteria weights (CSV)",
+    data=out1.to_csv(index=False),
+    file_name="criteria_weights.csv",
+    mime="text/csv",
+    use_container_width=True,
+)
+st.download_button(
+    "Download local weights (alternatives x criteria) (CSV)",
+    data=out3.to_csv(index=False),
+    file_name="local_weights.csv",
+    mime="text/csv",
+    use_container_width=True,
+)
+st.download_button(
+    "Download final ranking (CSV)",
+    data=out2.to_csv(index=False),
+    file_name="final_ranking.csv",
+    mime="text/csv",
+    use_container_width=True,
+)
+
+st.caption(
+    "Method references: Geometric-mean weights + consistency steps follow the standard AHP workflow "
+    "(see the stepwise GM + λmax/CI/CR example). :contentReference[oaicite:3]{index=3} "
+    "Consistency checking concept (CI/CR threshold 0.10) matches AHP procedure descriptions. :contentReference[oaicite:4]{index=4}"
+)
