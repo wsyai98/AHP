@@ -3,7 +3,8 @@ from pathlib import Path
 import streamlit as st
 import streamlit.components.v1 as components
 
-st.set_page_config(page_title="AHP Step-by-Step", layout="wide")
+st.set_page_config(page_title="AHP Step-by-Step (Pastel Purple)", layout="wide")
+APP_DIR = Path(__file__).resolve().parent
 
 # ---------- Single source of truth for the sample CSV ----------
 def load_sample_csv_text() -> str:
@@ -14,7 +15,7 @@ def load_sample_csv_text() -> str:
                 return p.read_text(encoding=enc)
             except Exception:
                 pass
-    # Fallback tiny demo
+    # fallback
     return (
         "Alternative,Cost,Quality,Delivery\n"
         "A1,200,8,4\n"
@@ -26,9 +27,8 @@ def load_sample_csv_text() -> str:
 
 SAMPLE_CSV = load_sample_csv_text()
 
-# ---------- IMPORTANT: escape CSV for JS template literal safely ----------
 def escape_for_js_template_literal(s: str) -> str:
-    # Avoid breaking: backslashes, backticks, and ${ interpolation
+    # Avoid breaking JS template literal: backslashes, backticks, and ${ interpolation
     return s.replace("\\", "\\\\").replace("`", "\\`").replace("${", "\\${")
 
 SAFE_SAMPLE_CSV = escape_for_js_template_literal(SAMPLE_CSV)
@@ -52,6 +52,7 @@ st.markdown(
     unsafe_allow_html=True,
 )
 
+# ------------------------------- HTML APP -------------------------------
 html = r"""
 <!doctype html>
 <html lang="en">
@@ -62,7 +63,6 @@ html = r"""
 
 <style>
   :root{
-    /* PURPLE PASTEL THEME */
     --bg1:#0b0b10;
     --bg2:#141227;
     --lav:#f3e8ff;
@@ -170,8 +170,7 @@ html = r"""
   .ok{color:#16a34a;font-weight:900}
   .bad{color:#dc2626;font-weight:900}
 
-  .grid2{display:grid;gap:12px;grid-template-columns:repeat(auto-fill,minmax(220px,1fr))}
-  select, input[type="number"]{
+  select{
     width:100%;
     padding:10px 12px;border-radius:12px;
     border:1px solid #ddd;background:#fbfaff;color:#111;
@@ -182,7 +181,7 @@ html = r"""
 <body class="theme-dark">
 <div class="container">
   <div class="header">
-    <div class="title">AHP — Step-by-Step (Paper Style)</div>
+    <div class="title">AHP — Step-by-Step (Paper)</div>
     <div class="row">
       <a class="btn" id="downloadSample">⬇️ Download Sample</a>
       <button class="btn" id="loadSample">📄 Load Sample</button>
@@ -206,21 +205,20 @@ html = r"""
 
       <div id="critCard" class="card dark" style="display:none;margin-top:14px">
         <div class="section-title">Step 2: Criteria detected (R₁…Rₘ)</div>
-        <div class="mini">These criteria will form the pairwise comparison matrix <b>P = [pᵢⱼ]</b>.</div>
+        <div class="mini">Criteria list below is extracted automatically from your CSV header.</div>
         <div id="critList" style="margin-top:10px"></div>
       </div>
 
       <div id="pairCard" class="card dark" style="display:none;margin-top:14px">
         <div class="section-title">Step 3: Pairwise Comparison Matrix P (Saaty)</div>
         <div class="mini">
-          Fill only <b>upper triangle</b>. The matrix is inverse-symmetrical:
-          <b>pᵢⱼ = 1 / pⱼᵢ</b>. Diagonal is 1.<br/>
-          Saaty scale: 1 (equal), 3,5,7,9; and 2,4,6,8 for intermediate.
+          Fill only <b>upper triangle</b>. Inverse-symmetry: <b>pᵢⱼ = 1 / pⱼᵢ</b>. Diagonal is 1.<br/>
+          Saaty scale: 1,3,5,7,9 (and 2,4,6,8 as intermediate).
         </div>
         <div class="table-wrap" style="margin-top:10px"><table id="ahpMatrix"></table></div>
         <div style="margin-top:10px" class="row">
           <button class="btn" id="ahpSetOnes">↺ Set all to 1</button>
-          <button class="btn" id="ahpCompute">✅ Step 4–5: Compute ω and Consistency</button>
+          <button class="btn" id="ahpCompute">✅ Step 4–5: Compute ω & Consistency</button>
         </div>
       </div>
     </div>
@@ -231,29 +229,26 @@ html = r"""
 
         <div class="pill">Step 4: Weights ω (principal eigenvector)</div>
         <div class="mini">
-          Paper idea: solve <b>Pω = λω</b> and take the eigenvector for the largest eigenvalue <b>λmax</b>,
-          then normalize ω so that ∑ωᵢ = 1.
+          Paper step: solve <b>Pω = λω</b>, take the eigenvector of the largest eigenvalue <b>λmax</b>, then normalize ω so ∑ωᵢ = 1.
         </div>
         <div class="table-wrap" style="margin-top:10px"><table id="weightsTbl"></table></div>
 
         <div style="margin-top:14px" class="pill">Step 5: Consistency (Sᵢ, S)</div>
         <div id="consBox" class="mini" style="margin-top:6px"></div>
 
-        <div style="margin-top:14px" class="pill">Formulas used (as in paper)</div>
+        <div style="margin-top:14px" class="pill">Formulas used (paper)</div>
         <div class="mini">
-          (Eq.1) <b>pᵢⱼ ≈ ωᵢ/ωⱼ</b> and <b>pᵢⱼ = 1/pⱼᵢ</b><br/><br/>
-          (Eq.3–4) <b>Pω = λω</b> (principal eigenvector → ω, eigenvalue → λmax)<br/><br/>
+          (Eq.3–4) <b>Pω = λω</b><br/>
           (Eq.5) <b>Sᵢ = (λmax − m)/(m − 1)</b><br/>
-          (Eq.6) <b>S = Sᵢ / S_A</b> (S_A = random consistency index / RI)<br/>
-          Acceptable if <b>S ≤ 0.10</b>.
+          (Eq.6) <b>S = Sᵢ / RI</b> (acceptable if <b>S ≤ 0.10</b>)<br/>
+          RI uses Table 1 values.
         </div>
       </div>
 
       <div class="card dark" style="margin-top:16px">
         <div class="section-title">Tip</div>
         <div class="mini">
-          Kalau <b>S (CR) &gt; 0.10</b> → pairwise kau tak konsisten.
-          Adjust upper triangle values sampai <b>S ≤ 0.10</b>.
+          If <b>S (CR) &gt; 0.10</b>, revise the upper triangle pairwise values until <b>S ≤ 0.10</b>.
         </div>
       </div>
     </div>
@@ -281,7 +276,7 @@ html = r"""
   $("downloadSample").download = "sample.csv";
   $("loadSample").onclick = ()=> initAll(SAMPLE_TEXT);
 
-  // ---------- CSV helpers ----------
+  // ---------- CSV parser ----------
   function parseCSVText(text){
     const rows=[]; let i=0, cur="", inQ=false, row=[];
     const pushCell=()=>{ row.push(cur); cur=""; };
@@ -314,7 +309,7 @@ html = r"""
     const tbody=document.createElement("tbody");
     rows.forEach(r=>{
       const tr=document.createElement("tr");
-      cols.forEach((c,ci)=>{
+      cols.forEach((_,ci)=>{
         const td=document.createElement("td");
         td.textContent=String(r[ci] ?? "");
         tr.appendChild(td);
@@ -329,7 +324,7 @@ html = r"""
   let crit = [];
   let P = [];
 
-  // Random Consistency Index values (Table 1 in your screenshot)
+  // Random Consistency Index values (Table 1)
   const RI = {
     1:0.00, 2:0.00, 3:0.58, 4:0.90, 5:1.12, 6:1.24, 7:1.32, 8:1.41, 9:1.45, 10:1.49,
     11:1.51, 12:1.48, 13:1.56, 14:1.57, 15:1.59
@@ -368,7 +363,6 @@ html = r"""
     });
     show($("critCard"), true);
 
-    // build P
     buildPairwiseMatrix();
     show($("pairCard"), true);
     show($("resultCard"), false);
@@ -420,7 +414,6 @@ html = r"""
             P[i][j] = v;
             P[j][i] = 1/v;
 
-            // mirrored cell is in row j, column i (+1 for row header)
             const mirror = tbody.children[j].children[i+1];
             mirror.textContent = (1/v).toFixed(6);
           };
@@ -428,6 +421,7 @@ html = r"""
         } else {
           td.textContent = (P[i][j]).toFixed(6);
         }
+
         tr.appendChild(td);
       }
       tbody.appendChild(tr);
@@ -447,7 +441,7 @@ html = r"""
     $("ahpCompute").onclick = ()=> computeAHP();
   }
 
-  // multiply matrix-vector
+  // matrix-vector multiply
   function matVec(A, x){
     const m=A.length;
     const y=new Array(m).fill(0);
@@ -458,24 +452,19 @@ html = r"""
     }
     return y;
   }
-  function norm1(x){
-    let s=0; for(const v of x) s += Math.abs(v);
-    return s || 1;
-  }
   function normalizeToSum1(x){
     let s=0; for(const v of x) s += v;
     s = s || 1;
     return x.map(v=> v/s);
   }
 
-  // Step 4: principal eigenvector via power iteration
+  // principal eigenvector via power iteration
   function powerIteration(A, maxIter=2000, tol=1e-12){
     const m=A.length;
-    let w=new Array(m).fill(1/m); // start uniform
+    let w=new Array(m).fill(1/m);
     for(let it=0; it<maxIter; it++){
       const y = matVec(A, w);
-      const wNew = normalizeToSum1(y.map(v=> Math.max(v, 1e-18))); // keep positive
-      // diff
+      const wNew = normalizeToSum1(y.map(v=> Math.max(v, 1e-18)));
       let diff=0;
       for(let i=0;i<m;i++) diff = Math.max(diff, Math.abs(wNew[i]-w[i]));
       w = wNew;
@@ -487,23 +476,17 @@ html = r"""
   function computeAHP(){
     const m = crit.length;
 
-    // ---- Step 4 (paper): solve Pω = λω, take principal eigenvector, normalize ----
+    // Step 4: solve Pω = λω (principal eigenvector)
     const w = powerIteration(P);
 
-    // ---- Step 5 (paper): λmax, S_I, S = S_I / RI ----
-    // Use λ_i = (Pω)_i / ω_i and λmax = average(λ_i)
+    // Step 5: λmax, SI, S
     const Pw = matVec(P, w);
     const lam = Pw.map((v,i)=> v/(w[i] || 1e-18));
     const lamMax = lam.reduce((s,v)=> s+v, 0) / m;
 
-    // Eq (5): S_I
-    const SI = (lamMax - m) / (m - 1);
-
-    // RI
-    const SA = (RI[m] !== undefined) ? RI[m] : (1.98*(m-2)/m); // approximation if m>15
-
-    // Eq (6): S
-    const S = (SA === 0) ? 0 : (SI / SA);
+    const SI = (lamMax - m) / (m - 1);                 // Eq (5)
+    const SA = (RI[m] !== undefined) ? RI[m] : (1.98*(m-2)/m); // Eq (7) approx if needed
+    const S  = (SA === 0) ? 0 : (SI / SA);             // Eq (6)
 
     renderWeightsTable(w, Pw, lam, lamMax);
     renderConsistency(m, lamMax, SI, SA, S);
@@ -530,7 +513,6 @@ html = r"""
       tbody.appendChild(tr);
     });
 
-    // footer row for λmax
     const trf = document.createElement("tr");
     trf.innerHTML =
       `<td colspan="3" style="text-align:right"><b>λ<sub>max</sub></b></td>
@@ -547,11 +529,9 @@ html = r"""
       `<div>m = <b>${m}</b></div>
        <div>λ<sub>max</sub> = <b>${lamMax.toFixed(6)}</b></div>
        <div>S<sub>I</sub> = (λ<sub>max</sub> − m)/(m − 1) = <b>${SI.toFixed(6)}</b></div>
-       <div>S<sub>A</sub> (RI) = <b>${SA.toFixed(2)}</b></div>
-       <div>S = S<sub>I</sub> / S<sub>A</sub> = <b>${S.toFixed(6)}</b> → ${ok ? "<span class='ok'>ACCEPTABLE (≤ 0.10)</span>" : "<span class='bad'>NOT OK (&gt; 0.10)</span>"}</div>
-       <div class="hint" style="margin-top:8px">
-         If NOT OK: adjust upper triangle pairwise values until S ≤ 0.10.
-       </div>`;
+       <div>RI = <b>${SA.toFixed(2)}</b></div>
+       <div>S = S<sub>I</sub>/RI = <b>${S.toFixed(6)}</b> → ${ok ? "<span class='ok'>ACCEPTABLE (≤ 0.10)</span>" : "<span class='bad'>NOT OK (&gt; 0.10)</span>"}</div>
+       <div class="hint" style="margin-top:8px">If NOT OK: revise upper triangle pairwise values until S ≤ 0.10.</div>`;
   }
 
   // preload sample
@@ -563,9 +543,8 @@ html = r"""
 </html>
 """
 
+# Inject sample csv safely
 html = html.replace("__INJECT_SAMPLE_CSV__", SAFE_SAMPLE_CSV)
-components.html(html, height=2600, scrolling=True)
-"""
 
-# Render the HTML app
-components.html(html.replace("__INJECT_SAMPLE_CSV__", SAFE_SAMPLE_CSV), height=2600, scrolling=True)
+# Render once (no duplicates)
+components.html(html, height=2600, scrolling=True)
