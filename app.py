@@ -3,7 +3,7 @@ from pathlib import Path
 import streamlit as st
 import streamlit.components.v1 as components
 
-st.set_page_config(page_title="AHP Step-by-Step (Pastel Purple)", layout="wide")
+st.set_page_config(page_title="AHP Step-by-Step (Paper / GM + Consistency)", layout="wide")
 APP_DIR = Path(__file__).resolve().parent
 
 # ---------- Single source of truth for the sample CSV ----------
@@ -59,7 +59,7 @@ html = r"""
 <head>
 <meta charset="utf-8"/>
 <meta name="viewport" content="width=device-width,initial-scale=1"/>
-<title>AHP Step-by-Step</title>
+<title>AHP Step-by-Step (Paper)</title>
 
 <style>
   :root{
@@ -170,18 +170,33 @@ html = r"""
   .ok{color:#16a34a;font-weight:900}
   .bad{color:#dc2626;font-weight:900}
 
-  select{
+  input.num{
     width:100%;
     padding:10px 12px;border-radius:12px;
     border:1px solid #ddd;background:#fbfaff;color:#111;
+    outline:none;
   }
+  input.num:focus{border-color:#8b5cf6; box-shadow:0 0 0 3px rgba(139,92,246,.12)}
+  .topbar{
+    display:flex; gap:10px; align-items:center; flex-wrap:wrap;
+    margin:8px 0 0;
+  }
+  .smallbtn{
+    display:inline-flex;align-items:center;gap:8px;
+    padding:8px 12px;border-radius:14px;
+    border:1px solid #cbd5e1;
+    background: rgba(255,255,255,.08);
+    color:inherit;cursor:pointer;
+    font-weight:800;
+  }
+  body.theme-light .smallbtn{background:#fff}
 </style>
 </head>
 
 <body class="theme-dark">
 <div class="container">
   <div class="header">
-    <div class="title">AHP — Step-by-Step (Paper)</div>
+    <div class="title">AHP — Step-by-Step (Paper GM + Consistency)</div>
     <div class="row">
       <a class="btn" id="downloadSample">⬇️ Download Sample</a>
       <button class="btn" id="loadSample">📄 Load Sample</button>
@@ -195,7 +210,7 @@ html = r"""
         <div class="section-title">Step 1: Upload CSV (auto-detect criteria)</div>
         <label for="csvAHP" class="btn">📤 Choose CSV</label>
         <input id="csvAHP" type="file" accept=".csv" style="display:none"/>
-        <p class="hint">First column = <b>Alternative</b>. Other columns = criteria names for AHP.</p>
+        <p class="hint">First column = <b>Alternative</b>. Other columns = criteria names.</p>
       </div>
 
       <div id="mCard" class="card light" style="display:none;margin-top:14px">
@@ -210,15 +225,23 @@ html = r"""
       </div>
 
       <div id="pairCard" class="card dark" style="display:none;margin-top:14px">
-        <div class="section-title">Step 3: Pairwise Comparison Matrix P (Saaty)</div>
+        <div class="section-title">Step 3: Pairwise Comparison Matrix P (fill upper triangle)</div>
+
         <div class="mini">
-          Fill only <b>upper triangle</b>. Inverse-symmetry: <b>pᵢⱼ = 1 / pⱼᵢ</b>. Diagonal is 1.<br/>
-          Saaty scale: 1,3,5,7,9 (and 2,4,6,8 as intermediate).
+          Fill only <b>upper triangle</b> (i &lt; j). Any <b>positive ratio</b> is allowed (e.g., 3, 0.5, 1/3).<br/>
+          Inverse-symmetry is auto: <b>pᵢⱼ = 1 / pⱼᵢ</b>. Diagonal is 1.<br/>
+          <b>Note:</b> Saaty 1–3–5–7–9 is only a guideline for fast input (not the computation formula).
         </div>
+
+        <div class="topbar">
+          <button class="smallbtn" id="fillSaaty">⚡ Fill Saaty template (upper)</button>
+          <span class="hint">Template will set all upper triangle to 1 (edit after).</span>
+        </div>
+
         <div class="table-wrap" style="margin-top:10px"><table id="ahpMatrix"></table></div>
         <div style="margin-top:10px" class="row">
           <button class="btn" id="ahpSetOnes">↺ Set all to 1</button>
-          <button class="btn" id="ahpCompute">✅ Step 4–5: Compute ω & Consistency</button>
+          <button class="btn" id="ahpCompute">✅ Step 4–5: Compute ω (GM) & Consistency</button>
         </div>
       </div>
     </div>
@@ -227,28 +250,28 @@ html = r"""
       <div id="resultCard" class="card light" style="display:none">
         <div class="section-title">AHP Output</div>
 
-        <div class="pill">Step 4: Weights ω (principal eigenvector)</div>
+        <div class="pill">Step 4: Weights ω (Geometric Mean method)</div>
         <div class="mini">
-          Paper step: solve <b>Pω = λω</b>, take the eigenvector of the largest eigenvalue <b>λmax</b>, then normalize ω so ∑ωᵢ = 1.
+          Compute by paper steps: <b>Πᵢ = ∏ⱼ pᵢⱼ</b>, <b>GMᵢ = (Πᵢ)^(1/m)</b>, then normalize <b>ωᵢ = GMᵢ / ΣGM</b>.
         </div>
         <div class="table-wrap" style="margin-top:10px"><table id="weightsTbl"></table></div>
 
-        <div style="margin-top:14px" class="pill">Step 5: Consistency (Sᵢ, S)</div>
+        <div style="margin-top:14px" class="pill">Step 5: Consistency (SI, S / CR)</div>
         <div id="consBox" class="mini" style="margin-top:6px"></div>
 
-        <div style="margin-top:14px" class="pill">Formulas used (paper)</div>
+        <div style="margin-top:14px" class="pill">Formulas used</div>
         <div class="mini">
-          (Eq.3–4) <b>Pω = λω</b><br/>
-          (Eq.5) <b>Sᵢ = (λmax − m)/(m − 1)</b><br/>
-          (Eq.6) <b>S = Sᵢ / RI</b> (acceptable if <b>S ≤ 0.10</b>)<br/>
-          RI uses Table 1 values.
+          <b>Pω</b> computed directly.<br/>
+          <b>λᵢ = (Pω)ᵢ / ωᵢ</b>, <b>λmax = average(λᵢ)</b><br/>
+          <b>SI = (λmax − m)/(m − 1)</b><br/>
+          <b>S (CR) = SI / RI</b> (acceptable if <b>S ≤ 0.10</b>).
         </div>
       </div>
 
       <div class="card dark" style="margin-top:16px">
         <div class="section-title">Tip</div>
         <div class="mini">
-          If <b>S (CR) &gt; 0.10</b>, revise the upper triangle pairwise values until <b>S ≤ 0.10</b>.
+          If <b>S (CR) &gt; 0.10</b>, revise the upper triangle values until <b>S ≤ 0.10</b>.
         </div>
       </div>
     </div>
@@ -290,7 +313,7 @@ html = r"""
         if(ch==='\"') inQ=true;
         else if(ch===',') pushCell();
         else if(ch==='\n'){ pushCell(); pushRow(); }
-        else if(ch==='\r'){}
+        else if(ch==='\r'){/*ignore*/}
         else cur+=ch;
       }
       i++;
@@ -324,11 +347,27 @@ html = r"""
   let crit = [];
   let P = [];
 
-  // Random Consistency Index values (Table 1)
+  // Random Consistency Index values (RI)
   const RI = {
     1:0.00, 2:0.00, 3:0.58, 4:0.90, 5:1.12, 6:1.24, 7:1.32, 8:1.41, 9:1.45, 10:1.49,
     11:1.51, 12:1.48, 13:1.56, 14:1.57, 15:1.59
   };
+
+  // Parse positive ratio (allow "1/3")
+  function parsePositiveNumberOrFraction(s){
+    s = String(s ?? "").trim();
+    if(!s) return NaN;
+    if(s.includes("/")){
+      const parts = s.split("/");
+      if(parts.length !== 2) return NaN;
+      const num = parseFloat(parts[0].trim());
+      const den = parseFloat(parts[1].trim());
+      if(isFinite(num) && isFinite(den) && den !== 0) return num/den;
+      return NaN;
+    }
+    const v = parseFloat(s);
+    return v;
+  }
 
   function initAll(csvText){
     const arr=parseCSVText(csvText);
@@ -347,12 +386,10 @@ html = r"""
       return;
     }
 
-    // preview (header + up to 10 rows)
     const previewRows = arr.slice(1, Math.min(arr.length, 11));
     renderPreviewTable(header, previewRows);
     show($("mCard"), true);
 
-    // show criteria pills
     const cl = $("critList");
     cl.innerHTML = "";
     crit.forEach(c=>{
@@ -401,23 +438,28 @@ html = r"""
         if(i===j){
           td.textContent = "1";
         } else if(i < j){
-          const sel = document.createElement("select");
-          [1,2,3,4,5,6,7,8,9].forEach(v=>{
-            const o=document.createElement("option");
-            o.value = String(v);
-            o.textContent = String(v);
-            sel.appendChild(o);
-          });
-          sel.value = "1";
-          sel.onchange = ()=>{
-            const v = parseFloat(sel.value);
+          const inp = document.createElement("input");
+          inp.className = "num";
+          inp.type = "text";
+          inp.value = "1";
+          inp.placeholder = "e.g. 3, 0.5, 1/3";
+
+          inp.oninput = ()=>{
+            const v = parsePositiveNumberOrFraction(inp.value);
+            if(!isFinite(v) || v <= 0){
+              inp.style.borderColor = "#dc2626";
+              return;
+            }
+            inp.style.borderColor = "#ddd";
             P[i][j] = v;
             P[j][i] = 1/v;
 
             const mirror = tbody.children[j].children[i+1];
             mirror.textContent = (1/v).toFixed(6);
+            show($("resultCard"), false);
           };
-          td.appendChild(sel);
+
+          td.appendChild(inp);
         } else {
           td.textContent = (P[i][j]).toFixed(6);
         }
@@ -428,13 +470,22 @@ html = r"""
     }
     tbl.appendChild(tbody);
 
+    $("fillSaaty").onclick = ()=>{
+      // only a template: sets all upper triangle inputs to 1 (user can edit to 3/5/7/9 etc.)
+      const inputs = tbl.querySelectorAll("input.num");
+      inputs.forEach(inp=>{
+        inp.value = "1";
+        inp.dispatchEvent(new Event("input"));
+      });
+      show($("resultCard"), false);
+    };
+
     $("ahpSetOnes").onclick = ()=>{
-      for(let i=0;i<m;i++){
-        for(let j=0;j<m;j++){
-          P[i][j] = (i===j?1:1);
-        }
-      }
-      buildPairwiseMatrix();
+      const inputs = tbl.querySelectorAll("input.num");
+      inputs.forEach(inp=>{
+        inp.value = "1";
+        inp.dispatchEvent(new Event("input"));
+      });
       show($("resultCard"), false);
     };
 
@@ -452,41 +503,50 @@ html = r"""
     }
     return y;
   }
+
   function normalizeToSum1(x){
     let s=0; for(const v of x) s += v;
     s = s || 1;
     return x.map(v=> v/s);
   }
 
-  // principal eigenvector via power iteration
-  function powerIteration(A, maxIter=2000, tol=1e-12){
-    const m=A.length;
-    let w=new Array(m).fill(1/m);
-    for(let it=0; it<maxIter; it++){
-      const y = matVec(A, w);
-      const wNew = normalizeToSum1(y.map(v=> Math.max(v, 1e-18)));
-      let diff=0;
-      for(let i=0;i<m;i++) diff = Math.max(diff, Math.abs(wNew[i]-w[i]));
-      w = wNew;
-      if(diff < tol) break;
-    }
-    return w;
-  }
-
   function computeAHP(){
     const m = crit.length;
 
-    // Step 4: solve Pω = λω (principal eigenvector)
-    const w = powerIteration(P);
+    // Validate: all entries must be positive
+    for(let i=0;i<m;i++){
+      for(let j=0;j<m;j++){
+        if(!isFinite(P[i][j]) || P[i][j] <= 0){
+          alert("Invalid pairwise value detected. Ensure all p_ij are positive numbers (or fractions).");
+          return;
+        }
+      }
+    }
 
-    // Step 5: λmax, SI, S
+    // ---------------- Step 4 (Paper): Geometric Mean weights ----------------
+    // Πi = ∏ p_ij
+    // GM_i = (Πi)^(1/m)
+    // ω_i = GM_i / Σ GM
+    const Pi = new Array(m).fill(1);
+    for(let i=0;i<m;i++){
+      let prod = 1;
+      for(let j=0;j<m;j++){
+        prod *= P[i][j];
+      }
+      Pi[i] = prod;
+    }
+    const GM = Pi.map(v => Math.pow(v, 1/m));
+    const w  = normalizeToSum1(GM);
+
+    // ---------------- Step 5: Consistency ----------------
+    // Pw, λ_i = (Pw)_i / w_i, λmax = average(λ_i)
     const Pw = matVec(P, w);
     const lam = Pw.map((v,i)=> v/(w[i] || 1e-18));
     const lamMax = lam.reduce((s,v)=> s+v, 0) / m;
 
-    const SI = (lamMax - m) / (m - 1);                 // Eq (5)
-    const SA = (RI[m] !== undefined) ? RI[m] : (1.98*(m-2)/m); // Eq (7) approx if needed
-    const S  = (SA === 0) ? 0 : (SI / SA);             // Eq (6)
+    const SI = (lamMax - m) / (m - 1);
+    const SA = (RI[m] !== undefined) ? RI[m] : (1.98*(m-2)/m); // approx if m>15
+    const S  = (SA === 0) ? 0 : (SI / SA);
 
     renderWeightsTable(w, Pw, lam, lamMax);
     renderConsistency(m, lamMax, SI, SA, S);
@@ -528,10 +588,10 @@ html = r"""
     box.innerHTML =
       `<div>m = <b>${m}</b></div>
        <div>λ<sub>max</sub> = <b>${lamMax.toFixed(6)}</b></div>
-       <div>S<sub>I</sub> = (λ<sub>max</sub> − m)/(m − 1) = <b>${SI.toFixed(6)}</b></div>
+       <div>SI = (λ<sub>max</sub> − m)/(m − 1) = <b>${SI.toFixed(6)}</b></div>
        <div>RI = <b>${SA.toFixed(2)}</b></div>
-       <div>S = S<sub>I</sub>/RI = <b>${S.toFixed(6)}</b> → ${ok ? "<span class='ok'>ACCEPTABLE (≤ 0.10)</span>" : "<span class='bad'>NOT OK (&gt; 0.10)</span>"}</div>
-       <div class="hint" style="margin-top:8px">If NOT OK: revise upper triangle pairwise values until S ≤ 0.10.</div>`;
+       <div>S (CR) = SI/RI = <b>${S.toFixed(6)}</b> → ${ok ? "<span class='ok'>ACCEPTABLE (≤ 0.10)</span>" : "<span class='bad'>NOT OK (&gt; 0.10)</span>"}</div>
+       <div class="hint" style="margin-top:8px">If NOT OK: revise upper triangle values until S ≤ 0.10.</div>`;
   }
 
   // preload sample
