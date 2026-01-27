@@ -1,553 +1,347 @@
 # app.py
-import base64
-from pathlib import Path
+import numpy as np
+import pandas as pd
 import streamlit as st
-import streamlit.components.v1 as components
 
-st.set_page_config(page_title="SYAI-Rank • AHP", layout="wide")
-APP_DIR = Path(__file__).resolve().parent
+# ---------------- Page config ----------------
+st.set_page_config(page_title="AHP Step-by-Step (Pastel Purple)", layout="wide")
 
-# ---------- Single source of truth for the sample CSV ----------
-def load_sample_csv_text() -> str:
-    p = Path("/mnt/data/sample (1).csv")
-    if p.exists():
-        for enc in ("utf-8", "latin-1"):
-            try:
-                return p.read_text(encoding=enc)
-            except Exception:
-                pass
-    # Fallback tiny demo
-    return (
-        "Alternative,Cost,Quality,Delivery\n"
-        "A1,200,8,4\n"
-        "A2,250,7,5\n"
-        "A3,300,9,6\n"
-        "A4,220,8,4\n"
-        "A5,180,6,7\n"
-    )
-
-SAMPLE_CSV = load_sample_csv_text()
-
-# ---------- IMPORTANT: escape CSV for JS template literal safely ----------
-def escape_for_js_template_literal(s: str) -> str:
-    # Avoid breaking: backslashes, backticks, and ${ interpolation
-    return s.replace("\\", "\\\\").replace("`", "\\`").replace("${", "\\${")
-
-SAFE_SAMPLE_CSV = escape_for_js_template_literal(SAMPLE_CSV)
-
-# ---------- base page background (purple pastel) ----------
+# ---------------- Pastel purple theme ----------------
 st.markdown(
     """
 <style>
   .stApp {
-    background:
-      radial-gradient(1200px 600px at 20% 0%, rgba(167,139,250,.22), transparent 55%),
-      radial-gradient(900px 500px at 85% 10%, rgba(196,181,253,.18), transparent 60%),
-      linear-gradient(180deg, #0b0b10 0%, #141227 55%, rgba(243,232,255,.25) 140%) !important;
+    background: linear-gradient(180deg, #0b0b12 0%, #120a2a 40%, #f3e8ff 130%) !important;
   }
   [data-testid="stSidebar"] {
-    background: rgba(237, 233, 254, 0.08) !important;
-    backdrop-filter: blur(6px);
+    background: rgba(243, 232, 255, 0.10) !important;
+    backdrop-filter: blur(8px);
+    border-right: 1px solid rgba(216, 180, 254, 0.25);
   }
+  .block-container { padding-top: 1.2rem; }
+  h1, h2, h3, h4 { color: #f5f3ff; }
+  p, li, label, div { color: #e9d5ff; }
+  .card {
+    background: rgba(17, 24, 39, 0.55);
+    border: 1px solid rgba(216, 180, 254, 0.25);
+    border-radius: 16px;
+    padding: 16px;
+  }
+  .card-light {
+    background: rgba(255, 255, 255, 0.78);
+    border: 1px solid rgba(216, 180, 254, 0.45);
+    border-radius: 16px;
+    padding: 16px;
+    color: #111827 !important;
+  }
+  .card-light * { color: #111827 !important; }
+  .pill {
+    display:inline-block;
+    padding: 6px 10px;
+    border-radius: 999px;
+    background: rgba(168, 85, 247, 0.16);
+    border: 1px solid rgba(216, 180, 254, 0.35);
+    color: #f5f3ff;
+    font-size: 12px;
+    margin-right: 6px;
+  }
+  .stButton button {
+    background: #a855f7 !important;
+    border: 1px solid #7c3aed !important;
+    color: white !important;
+    border-radius: 12px !important;
+    padding: 0.6rem 0.9rem !important;
+  }
+  .stButton button:hover { filter: brightness(0.96); }
+  .stDataFrame { border-radius: 12px; overflow: hidden; }
+  code { color: #111827 !important; background: rgba(255,255,255,0.75); padding: 2px 6px; border-radius: 8px; }
 </style>
 """,
     unsafe_allow_html=True,
 )
 
-# ------------------------------- HTML APP -------------------------------
-html = r"""
-<!doctype html>
-<html lang="en">
-<head>
-<meta charset="utf-8"/>
-<meta name="viewport" content="width=device-width,initial-scale=1"/>
-<title>SYAI-Rank • AHP</title>
+st.title("AHP Step-by-Step (Pastel Purple) — ikut paper")
 
-<style>
-  :root{
-    /* PURPLE PASTEL THEME */
-    --bg1:#0b0b10;
-    --bg2:#141227;
-    --lav:#f3e8ff;
-    --lav2:#e9d5ff;
-    --vio:#c4b5fd;
-    --vio2:#a78bfa;
-    --vio3:#8b5cf6;
-    --ink:#0f172a;
-    --text:#f8fafc;
+# ---------------- Helpers (AHP by paper) ----------------
+# Random Index (Saaty) typical table for m=1..15
+RI_TABLE = {
+    1: 0.00, 2: 0.00, 3: 0.58, 4: 0.90, 5: 1.12, 6: 1.24, 7: 1.32, 8: 1.41,
+    9: 1.45, 10: 1.49, 11: 1.51, 12: 1.48, 13: 1.56, 14: 1.57, 15: 1.59
+}
 
-    --cardDark: rgba(18,16,35,.78);
-    --cardLight: rgba(255,255,255,.78);
+def safe_float(x, default=np.nan):
+    try:
+        v = float(x)
+        return v
+    except Exception:
+        return default
 
-    --bdDark:#2c2a45;
-    --bdLight:#e5e7eb;
+def build_pairwise_matrix(criteria, pair_inputs):
+    """
+    criteria: list[str]
+    pair_inputs: dict[(i,j)] = p_ij for i<j
+    return P (m x m) reciprocal matrix with diag=1
+    """
+    m = len(criteria)
+    P = np.ones((m, m), dtype=float)
+    for i in range(m):
+        for j in range(i + 1, m):
+            pij = float(pair_inputs[(i, j)])
+            P[i, j] = pij
+            P[j, i] = 1.0 / pij
+    return P
 
-    --btn:#a78bfa;
-    --btnBd:#8b5cf6;
-  }
+def ahp_weights_geometric_mean(P):
+    """
+    Paper scheme:
+      Π_i = ∏_j p_ij
+      g_i = (Π_i)^(1/m)
+      ω_i = g_i / ∑ g_i
+    """
+    m = P.shape[0]
+    # product of each row
+    Pi = np.prod(P, axis=1)
+    gi = Pi ** (1.0 / m)
+    w = gi / np.sum(gi)
+    return Pi, gi, w
 
-  *{box-sizing:border-box}
-  html,body{height:100%;margin:0}
-  body{font-family:ui-sans-serif,system-ui,-apple-system,"Segoe UI",Roboto,Arial}
+def ahp_lambda_max_approx(P, w):
+    """
+    Approx λmax from paper:
+      compute y = P w
+      λ_i = y_i / w_i
+      λmax = average(λ_i)
+    """
+    y = P @ w
+    lam_i = y / np.maximum(w, 1e-16)
+    lam_max = float(np.mean(lam_i))
+    return y, lam_i, lam_max
 
-  body.theme-dark{
-    color:var(--text);
-    background: radial-gradient(1200px 600px at 20% 0%, rgba(167,139,250,.25), transparent 55%),
-                radial-gradient(900px 500px at 85% 10%, rgba(196,181,253,.22), transparent 60%),
-                linear-gradient(180deg, var(--bg1) 0%, var(--bg2) 55%, rgba(243,232,255,.28) 140%);
-  }
-  body.theme-light{
-    color:#111;
-    background: radial-gradient(1100px 520px at 15% 0%, rgba(167,139,250,.25), transparent 55%),
-                radial-gradient(900px 460px at 85% 10%, rgba(196,181,253,.20), transparent 60%),
-                linear-gradient(180deg, #fbfaff 0%, #f8fafc 55%, var(--lav) 140%);
-  }
+def consistency_metrics(lam_max, m):
+    """
+    SI = (λmax - m)/(m-1)
+    S  = SI/SA  (SA = random index)
+    Accept if S <= 0.1
+    """
+    if m <= 2:
+        return 0.0, 0.0, RI_TABLE.get(m, 0.0), True
 
-  .container{max-width:1200px;margin:24px auto;padding:0 16px}
-  .header{display:flex;align-items:center;justify-content:space-between;margin-bottom:12px}
-  .title{
-    font-weight:900;
-    font-size:28px;
-    letter-spacing:.3px;
-    color: var(--lav);
-    text-shadow: 0 10px 28px rgba(167,139,250,.22);
-  }
-  body.theme-light .title{color:#111;text-shadow:none}
+    SI = (lam_max - m) / (m - 1)
 
-  .row{display:flex;gap:10px;align-items:center;flex-wrap:wrap}
-  .btn{
-    display:inline-flex;align-items:center;gap:8px;
-    padding:10px 14px;border-radius:14px;
-    border:1px solid var(--btnBd);
-    background: linear-gradient(180deg, var(--btn) 0%, var(--vio2) 100%);
-    color:#fff;cursor:pointer;
-    box-shadow: 0 12px 24px rgba(139,92,246,.18);
-    text-decoration:none;
-    font-weight:800;
-  }
-  .btn:hover{filter:brightness(0.98); transform: translateY(-.5px)}
-  .toggle{
-    padding:8px 12px;border-radius:14px;
-    border:1px solid var(--bdDark);
-    background: rgba(255,255,255,.06);
-    color:#eee;cursor:pointer;
-    font-weight:800;
-  }
-  body.theme-light .toggle{background:#fff;color:#111;border-color:#cbd5e1}
+    # SA / RI
+    SA = RI_TABLE.get(m, None)
+    if SA is None:
+        # Paper mentions rough approximation for m>15:
+        # SA = 1.98*(m-2)/m  (they note it's slightly larger than table)
+        SA = 1.98 * (m - 2) / m
 
-  .tabs{display:flex;gap:8px;margin:12px 0;position:relative;z-index:10;flex-wrap:wrap}
-  .tab{
-    padding:10px 14px;border-radius:14px;
-    border:1px solid rgba(196,181,253,.35);
-    background: rgba(255,255,255,.06);
-    color:#e5e7eb;cursor:pointer;
-    font-weight:900;
-  }
-  .tab.active{
-    background: linear-gradient(180deg, rgba(167,139,250,.95), rgba(139,92,246,.95));
-    border-color: rgba(196,181,253,.9);
-    color:#fff;
-  }
-  body.theme-light .tab{background:#ede9fe;color:#111;border-color:#c4b5fd}
+    S = SI / (SA if SA != 0 else 1e-16)
+    ok = (S <= 0.10)
+    return float(SI), float(S), float(SA), ok
 
-  .grid{display:grid;gap:16px;grid-template-columns:1fr}
-  @media (min-width:1024px){.grid{grid-template-columns:1fr 2fr}}
+def normalize_for_weighted_sum(df_vals, crit_types):
+    """
+    Simple ranking after AHP weights (optional):
+      Benefit: x / max
+      Cost:    min / x
+    """
+    norm = df_vals.copy().astype(float)
+    for c in norm.columns:
+        col = norm[c].values.astype(float)
+        if crit_types[c] == "Cost":
+            mn = np.nanmin(col)
+            norm[c] = mn / np.maximum(col, 1e-16)
+        else:
+            mx = np.nanmax(col)
+            norm[c] = col / (mx if mx != 0 else 1.0)
+    return norm
 
-  .card{
-    border-radius:18px;padding:18px;
-    border:1px solid var(--bdLight);
-    backdrop-filter: blur(8px);
-  }
-  .card.dark{background:var(--cardDark);color:#e5e7eb;border-color:var(--bdDark)}
-  .card.light{background:var(--cardLight);color:#111;border-color:var(--bdLight)}
-  body.theme-light .card.dark{background:#fff;color:#111;border-color:#e5e7eb}
+# ---------------- Sidebar: Upload ----------------
+with st.sidebar:
+    st.markdown("### Upload CSV")
+    up = st.file_uploader("CSV (first column = Alternative)", type=["csv"])
+    st.markdown("---")
+    st.markdown("### Nota ringkas")
+    st.write("AHP perlukan **pairwise comparison** untuk criteria (skala Saaty).")
 
-  .section-title{
-    font-weight:900;font-size:18px;margin-bottom:12px;
-    color: var(--lav2);
-  }
-  body.theme-light .section-title{color:#4c1d95}
+# ---------------- Main: Load data ----------------
+if up is None:
+    st.markdown('<div class="card">Upload CSV dulu. Lepas tu sistem auto keluar nama criteria dan form pairwise AHP.</div>', unsafe_allow_html=True)
+    st.stop()
 
-  .label{display:block;font-size:12px;opacity:.9;margin-bottom:4px;font-weight:800}
-  input[type="number"], select{
-    width:100%;
-    padding:10px 12px;border-radius:12px;
-    border:1px solid #ddd;background:#fbfaff;color:#111;
-  }
-  .hint{font-size:12px;opacity:.85}
-  .mini{font-size:12px;opacity:.92;line-height:1.45}
+df = pd.read_csv(up)
 
-  .table-wrap{overflow:auto;max-height:460px}
-  table{width:100%;border-collapse:collapse;font-size:14px;color:#111}
-  th,td{text-align:left;padding:8px 10px;border-bottom:1px solid #e5e7eb}
-  th{background:rgba(243,232,255,.65); position:sticky; top:0}
+# Fix column name for first column
+cols = list(df.columns)
+if len(cols) < 2:
+    st.error("CSV mesti ada sekurang-kurangnya 2 kolum: Alternative + at least 1 criterion.")
+    st.stop()
 
-  .grid2{display:grid;gap:12px;grid-template-columns:repeat(auto-fill,minmax(220px,1fr))}
+if cols[0].strip().lower() != "alternative":
+    # rename first column to Alternative
+    df = df.rename(columns={cols[0]: "Alternative"})
+criteria = [c for c in df.columns if c != "Alternative"]
 
-  /* Tooltip */
-  #tt{
-    position:fixed;display:none;pointer-events:none;background:#fff;color:#111;
-    padding:6px 8px;border-radius:10px;font-size:12px;
-    box-shadow:0 12px 24px rgba(0,0,0,.18);
-    border:1px solid #e5e7eb;z-index:9999
-  }
+# ensure numeric for criteria
+df_crit = df[criteria].apply(pd.to_numeric, errors="coerce")
 
-  .pill{
-    display:inline-flex;align-items:center;gap:8px;
-    padding:6px 10px;border-radius:999px;
-    border:1px solid #c4b5fd;
-    background: rgba(237,233,254,.7);
-    margin:0 6px 6px 0;font-size:12px;color:#111;
-    font-weight:900;
-  }
-</style>
-</head>
+st.markdown('<div class="card-light"><b>Detected criteria:</b> ' +
+            " ".join([f'<span class="pill">{c}</span>' for c in criteria]) +
+            "</div>", unsafe_allow_html=True)
 
-<body class="theme-dark">
-<div class="container">
-  <div class="header">
-    <div class="title">SYAI-Rank • AHP (Pastel Purple)</div>
-    <div class="row">
-      <a class="btn" id="downloadSample">⬇️ Download Sample</a>
-      <button class="btn" id="loadSample">📄 Load Sample</button>
-      <button class="toggle" id="themeToggle">🌙 Dark</button>
-    </div>
-  </div>
+colL, colR = st.columns([1, 1], gap="large")
 
-  <div class="tabs">
-    <button type="button" class="tab active" id="tabAHP">AHP (Step-by-Step)</button>
-    <button type="button" class="tab" id="tabSYAI">SYAI (use AHP weights later)</button>
-  </div>
+with colL:
+    st.markdown('<div class="card">', unsafe_allow_html=True)
+    st.subheader("Step 0: Decision Matrix (input)")
+    st.dataframe(df, use_container_width=True, height=260)
 
-  <!-- ================= TAB: AHP ================= -->
-  <div id="viewAHP">
-    <div class="grid">
-      <div>
-        <div class="card dark">
-          <div class="section-title">Step 1: Upload CSV (detect criteria)</div>
-          <label for="csvAHP" class="btn">📤 Choose CSV</label>
-          <input id="csvAHP" type="file" accept=".csv" style="display:none"/>
-          <p class="hint">First column = <b>Alternative</b>. Other columns = criteria for AHP.</p>
-        </div>
+    st.subheader("Step 1: Set criteria type (optional for final ranking)")
+    crit_types = {}
+    for c in criteria:
+        crit_types[c] = st.selectbox(f"{c} type", ["Benefit", "Cost"], index=0, key=f"type_{c}")
+    st.markdown("</div>", unsafe_allow_html=True)
 
-        <div id="ahpCritCard" class="card dark" style="display:none">
-          <div class="section-title">Step 2: Criteria detected</div>
-          <div class="mini">These criteria will be used to build the AHP pairwise matrix.</div>
-          <div id="ahpCritList" style="margin-top:10px"></div>
-        </div>
+with colR:
+    st.markdown('<div class="card">', unsafe_allow_html=True)
+    st.subheader("Step 2: Pairwise comparison (Saaty scale)")
 
-        <div id="ahpPairCard" class="card dark" style="display:none">
-          <div class="section-title">Step 3: Pairwise Comparison Matrix (Saaty scale)</div>
-          <div class="mini">
-            Fill only the <b>upper triangle</b>. The lower triangle becomes reciprocal automatically.<br/>
-            Scale: 1 (equal), 3, 5, 7, 9. Use 2,4,6,8 for intermediate.
-          </div>
-          <div class="table-wrap" style="margin-top:10px"><table id="ahpMatrix"></table></div>
-          <div style="margin-top:10px" class="row">
-            <button class="btn" id="ahpSetOnes">↺ Set all to 1</button>
-            <button class="btn" id="ahpCompute">✅ Step 4–5: Compute Weights & Consistency</button>
-          </div>
-        </div>
-      </div>
+    st.caption("Untuk setiap pasangan (Ci, Cj): pilih siapa lebih penting + tahap kepentingan. "
+               "Matrix akan auto jadi reciprocal (p_ji = 1/p_ij) dan diagonal = 1.")
 
-      <div>
-        <div id="ahpResultCard" class="card light" style="display:none">
-          <div class="section-title">AHP Output</div>
-
-          <div class="pill">Step 4: Weights via Geometric Mean</div>
-          <div class="table-wrap"><table id="ahpWeightsTbl"></table></div>
-
-          <div style="margin-top:14px" class="pill">Step 5: Consistency</div>
-          <div id="ahpConsistency" class="mini"></div>
-
-          <div style="margin-top:14px" class="pill">Formulas used</div>
-          <div class="mini">
-            Π<sub>i</sub> = ∏<sub>j</sub> p<sub>ij</sub><br/>
-            g<sub>i</sub> = (Π<sub>i</sub>)<sup>1/m</sup><br/>
-            ω<sub>i</sub> = g<sub>i</sub> / ∑ g<sub>k</sub><br/><br/>
-            y = Pω,  λ<sub>i</sub> = y<sub>i</sub>/ω<sub>i</sub>,  λ<sub>max</sub> = (1/m)∑λ<sub>i</sub><br/>
-            CI = (λ<sub>max</sub> − m)/(m − 1),  CR = CI/RI
-          </div>
-        </div>
-
-        <div class="card dark" style="margin-top:16px">
-          <div class="section-title">Tip</div>
-          <div class="mini">
-            If your <b>CR &gt; 0.10</b>, revise the pairwise values (upper triangle) until CR ≤ 0.10.
-          </div>
-        </div>
-      </div>
-    </div>
-  </div>
-
-  <!-- ================= TAB: SYAI (placeholder) ================= -->
-  <div id="viewSYAI" style="display:none">
-    <div class="card dark">
-      <div class="section-title">SYAI tab</div>
-      <div class="mini">
-        This file focuses on making AHP step-by-step working + purple pastel UI.
-        If you want, I can merge your full SYAI code back here and auto-fill SYAI weights using the AHP weights you computed.
-      </div>
-    </div>
-  </div>
-
-</div>
-
-<div id="tt"></div>
-
-<script>
-(function(){
-  const $  = (id)=> document.getElementById(id);
-  const show = (el,on=true)=> el.style.display = on ? "" : "none";
-
-  // ---------- theme ----------
-  let dark=true;
-  function applyTheme(){
-    document.body.classList.toggle('theme-dark', dark);
-    document.body.classList.toggle('theme-light', !dark);
-    $("themeToggle").textContent = dark ? "🌙 Dark" : "☀️ Light";
-  }
-  $("themeToggle").onclick = ()=>{ dark=!dark; applyTheme(); };
-  applyTheme();
-
-  // ---------- injected by Python ----------
-  const SAMPLE_TEXT = `__INJECT_SAMPLE_CSV__`;
-
-  $("downloadSample").href = "data:text/csv;charset=utf-8," + encodeURIComponent(SAMPLE_TEXT);
-  $("downloadSample").download = "sample.csv";
-  $("loadSample").onclick = ()=> initAHP(SAMPLE_TEXT);
-
-  // ---------- tabs ----------
-  function activateAHP(){
-    $("tabAHP").classList.add("active"); $("tabSYAI").classList.remove("active");
-    show($("viewAHP"), true); show($("viewSYAI"), false);
-  }
-  function activateSYAI(){
-    $("tabSYAI").classList.add("active"); $("tabAHP").classList.remove("active");
-    show($("viewAHP"), false); show($("viewSYAI"), true);
-  }
-  $("tabAHP").addEventListener("click", activateAHP);
-  $("tabSYAI").addEventListener("click", activateSYAI);
-  activateAHP();
-
-  // ---------- CSV helpers ----------
-  function parseCSVText(text){
-    const rows=[]; let i=0, cur="", inQ=false, row=[];
-    const pushCell=()=>{ row.push(cur); cur=""; };
-    const pushRow =()=>{ rows.push(row); row=[]; };
-    while(i<text.length){
-      const ch=text[i];
-      if(inQ){
-        if(ch==='\"'){ if(text[i+1]==='\"'){ cur+='\"'; i++; } else { inQ=false; } }
-        else cur+=ch;
-      }else{
-        if(ch==='\"') inQ=true;
-        else if(ch===',') pushCell();
-        else if(ch==='\n'){ pushCell(); pushRow(); }
-        else if(ch==='\r'){}
-        else cur+=ch;
-      }
-      i++;
-    }
-    pushCell(); if(row.length>1 || row[0] !== "") pushRow();
-    return rows;
-  }
-
-  // ---------- AHP state ----------
-  let crit = [];
-  let P = [];
-  const RI = { 1:0.00, 2:0.00, 3:0.58, 4:0.90, 5:1.12, 6:1.24, 7:1.32, 8:1.41, 9:1.45, 10:1.49 };
-
-  function initAHP(csvText){
-    const arr = parseCSVText(csvText);
-    if(!arr.length) return;
-
-    let header = arr[0].map(x=> String(x??"").trim());
-    if(header[0] !== "Alternative"){
-      const idx = header.indexOf("Alternative");
-      if(idx>0){ const nm=header.splice(idx,1)[0]; header.unshift(nm); }
-      else header[0] = "Alternative";
+    intensity_opts = {
+        1: "1 (Equal)",
+        2: "2 (Between)",
+        3: "3 (Moderate)",
+        4: "4 (Between)",
+        5: "5 (Strong)",
+        6: "6 (Between)",
+        7: "7 (Very strong)",
+        8: "8 (Between)",
+        9: "9 (Extreme)",
     }
 
-    crit = header.slice(1);
-    if(crit.length < 2){
-      alert("Need at least 2 criteria columns for AHP.");
-      return;
-    }
+    pair_inputs = {}
+    m = len(criteria)
 
-    buildCriteriaCard();
-    buildPairwiseMatrix();
+    if m == 1:
+        st.info("Hanya 1 criteria → weight = 1.")
+    else:
+        for i in range(m):
+            for j in range(i + 1, m):
+                c_i, c_j = criteria[i], criteria[j]
+                with st.container(border=True):
+                    st.markdown(f"**{c_i} vs {c_j}**")
+                    who = st.radio(
+                        "Which is more important?",
+                        options=[c_i, c_j],
+                        horizontal=True,
+                        key=f"who_{i}_{j}",
+                    )
+                    inten = st.select_slider(
+                        "Intensity",
+                        options=list(intensity_opts.keys()),
+                        value=3,
+                        format_func=lambda k: intensity_opts[k],
+                        key=f"inten_{i}_{j}",
+                    )
+                    # set p_ij
+                    if who == c_i:
+                        pij = float(inten)
+                    else:
+                        pij = 1.0 / float(inten)
+                    pair_inputs[(i, j)] = pij
 
-    show($("ahpCritCard"), true);
-    show($("ahpPairCard"), true);
-    show($("ahpResultCard"), false);
-  }
+    st.markdown("</div>", unsafe_allow_html=True)
 
-  $("csvAHP").onchange = (e)=>{
-    const f=e.target.files[0]; if(!f) return;
-    const r=new FileReader();
-    r.onload = ()=> initAHP(String(r.result));
-    r.readAsText(f);
-  };
+# ---------------- Compute AHP ----------------
+st.markdown("---")
+st.subheader("AHP Results (Step-by-Step)")
 
-  function buildCriteriaCard(){
-    const box = $("ahpCritList");
-    box.innerHTML = "";
-    crit.forEach((c)=> {
-      const pill = document.createElement("span");
-      pill.className = "pill";
-      pill.textContent = c;
-      box.appendChild(pill);
-    });
-  }
+if len(criteria) == 1:
+    P = np.array([[1.0]])
+    Pi = np.array([1.0])
+    gi = np.array([1.0])
+    w = np.array([1.0])
+    y = np.array([1.0])
+    lam_i = np.array([1.0])
+    lam_max = 1.0
+    SI, S, SA, ok = 0.0, 0.0, 0.0, True
+else:
+    P = build_pairwise_matrix(criteria, pair_inputs)
+    Pi, gi, w = ahp_weights_geometric_mean(P)
+    y, lam_i, lam_max = ahp_lambda_max_approx(P, w)
+    SI, S, SA, ok = consistency_metrics(lam_max, len(criteria))
 
-  function buildPairwiseMatrix(){
-    const m = crit.length;
-    P = Array.from({length:m}, (_,i)=> Array.from({length:m}, (_,j)=> (i===j?1:1)));
+tab1, tab2, tab3, tab4 = st.tabs(["Step 3: Matrix P", "Step 4: Weights ω", "Step 5: Consistency", "Step 6: Optional Ranking"])
 
-    const tbl = $("ahpMatrix");
-    tbl.innerHTML = "";
+with tab1:
+    st.markdown('<div class="card-light">', unsafe_allow_html=True)
+    st.markdown("**Pairwise comparison matrix**  \(P=[p_{ij}]\)  (reciprocal, diagonal = 1).")
+    dfP = pd.DataFrame(P, index=criteria, columns=criteria)
+    st.dataframe(dfP.style.format("{:.4f}"), use_container_width=True, height=320)
+    st.markdown("</div>", unsafe_allow_html=True)
 
-    const thead = document.createElement("thead");
-    const trh = document.createElement("tr");
-    trh.innerHTML = "<th>Criteria</th>" + crit.map(c=> `<th>${c}</th>`).join("");
-    thead.appendChild(trh);
-    tbl.appendChild(thead);
+with tab2:
+    st.markdown('<div class="card-light">', unsafe_allow_html=True)
+    st.markdown("Mengikut paper (geometric mean):")
+    st.latex(r"\Pi_i=\prod_{j=1}^{m} p_{ij},\quad g_i=\sqrt[m]{\Pi_i},\quad \omega_i=\frac{g_i}{\sum_{k=1}^{m} g_k}")
+    out = pd.DataFrame({
+        "Criterion": criteria,
+        "Pi (row product)": Pi,
+        "gi (m-th root)": gi,
+        "weight ωi": w,
+    })
+    st.dataframe(out.style.format({"Pi (row product)": "{:.6f}", "gi (m-th root)": "{:.6f}", "weight ωi": "{:.6f}"}),
+                 use_container_width=True, height=280)
+    st.markdown("</div>", unsafe_allow_html=True)
 
-    const tbody = document.createElement("tbody");
-    for(let i=0;i<m;i++){
-      const tr = document.createElement("tr");
+with tab3:
+    st.markdown('<div class="card-light">', unsafe_allow_html=True)
+    st.markdown("Anggaran \(\\lambda_{max}\) ikut paper:")
+    st.latex(r"y=P\omega,\quad \lambda_i=\frac{y_i}{\omega_i},\quad \lambda_{max}=\frac{1}{m}\sum_{i=1}^{m}\lambda_i")
+    cons = pd.DataFrame({
+        "Criterion": criteria,
+        "(Pω)i": y,
+        "ωi": w,
+        "λi=(Pω)i/ωi": lam_i,
+    })
+    st.dataframe(cons.style.format({"(Pω)i": "{:.6f}", "ωi": "{:.6f}", "λi=(Pω)i/ωi": "{:.6f}"}),
+                 use_container_width=True, height=260)
 
-      const th = document.createElement("th");
-      th.textContent = crit[i];
-      tr.appendChild(th);
+    st.markdown("Consistency index & ratio:")
+    st.latex(r"SI=\frac{\lambda_{max}-m}{m-1},\quad S=\frac{SI}{SA}")
+    st.write(f"m = **{len(criteria)}**")
+    st.write(f"λmax = **{lam_max:.6f}**")
+    st.write(f"SI = **{SI:.6f}**")
+    st.write(f"SA (Random Index) = **{SA:.6f}**")
+    st.write(f"S (Consistency Ratio) = **{S:.6f}**")
 
-      for(let j=0;j<m;j++){
-        const td = document.createElement("td");
+    if ok:
+        st.success("✅ Consistent (S ≤ 0.10)")
+    else:
+        st.warning("⚠️ Not consistent (S > 0.10). Cuba adjust pairwise values sampai S ≤ 0.10.")
+    st.markdown("</div>", unsafe_allow_html=True)
 
-        if(i===j){
-          td.textContent = "1";
-        } else if(i < j){
-          const sel = document.createElement("select");
-          [1,2,3,4,5,6,7,8,9].forEach(v=>{
-            const o=document.createElement("option");
-            o.value = String(v);
-            o.textContent = String(v);
-            sel.appendChild(o);
-          });
-          sel.value = "1";
-          sel.onchange = ()=>{
-            const v = parseFloat(sel.value);
-            P[i][j] = v;
-            P[j][i] = 1/v;
+with tab4:
+    st.markdown('<div class="card-light">', unsafe_allow_html=True)
+    st.markdown("Ini **optional**: guna weight AHP untuk ranking alternatif secara Weighted Sum (simple).")
+    st.caption("Normalization: Benefit = x/max, Cost = min/x. Lepas tu Score = Σ ωj * normalized_ij.")
 
-            // mirrored cell is in row j, column i (+1 for row header)
-            const mirror = tbody.children[j].children[i+1];
-            mirror.textContent = (1/v).toFixed(6);
-          };
-          td.appendChild(sel);
-        } else {
-          td.textContent = (P[i][j]).toFixed(6);
-        }
+    norm = normalize_for_weighted_sum(df_crit, crit_types)
+    score = (norm.values @ w.reshape(-1, 1)).flatten()
 
-        tr.appendChild(td);
-      }
+    res = pd.DataFrame({
+        "Alternative": df["Alternative"].astype(str),
+        "Score": score
+    }).sort_values("Score", ascending=False).reset_index(drop=True)
+    res["Rank"] = np.arange(1, len(res) + 1)
 
-      tbody.appendChild(tr);
-    }
-    tbl.appendChild(tbody);
+    st.subheader("Ranking")
+    st.dataframe(res.style.format({"Score": "{:.6f}"}), use_container_width=True, height=280)
 
-    $("ahpSetOnes").onclick = ()=>{
-      for(let i=0;i<m;i++){
-        for(let j=0;j<m;j++){
-          P[i][j] = (i===j?1:1);
-        }
-      }
-      buildPairwiseMatrix();
-      show($("ahpResultCard"), false);
-    };
-
-    $("ahpCompute").onclick = ()=> computeAHP();
-  }
-
-  function computeAHP(){
-    const m = crit.length;
-
-    // Step 4: geometric mean weights
-    const prod = new Array(m).fill(1);
-    for(let i=0;i<m;i++){
-      let p=1;
-      for(let j=0;j<m;j++) p *= P[i][j];
-      prod[i]=p;
-    }
-
-    const g = prod.map(v=> Math.pow(v, 1/m));
-    const sumg = g.reduce((s,v)=> s+v, 0) || 1;
-    const w = g.map(v=> v/sumg);
-
-    // Step 5: consistency
-    const y = new Array(m).fill(0);
-    for(let i=0;i<m;i++){
-      let s=0;
-      for(let j=0;j<m;j++) s += P[i][j]*w[j];
-      y[i]=s;
-    }
-
-    const lam = y.map((yi,i)=> yi/(w[i] || 1e-12));
-    const lamMax = lam.reduce((s,v)=> s+v, 0) / m;
-
-    const CI = (lamMax - m) / (m - 1);
-    const ri = RI[m] ?? 1.49;
-    const CR = (ri === 0) ? 0 : (CI / ri);
-
-    renderWeightsTable(w, g, prod);
-    renderConsistency(lamMax, CI, CR, ri);
-
-    show($("ahpResultCard"), true);
-  }
-
-  function renderWeightsTable(w, g, prod){
-    const tb = $("ahpWeightsTbl");
-    tb.innerHTML = "";
-    const thead = document.createElement("thead");
-    thead.innerHTML = "<tr><th>Criterion</th><th>Πᵢ (row product)</th><th>gᵢ (geom. mean)</th><th>Weight ωᵢ</th></tr>";
-    tb.appendChild(thead);
-
-    const tbody = document.createElement("tbody");
-    crit.forEach((c,i)=>{
-      const tr = document.createElement("tr");
-      tr.innerHTML =
-        `<td>${c}</td>
-         <td>${prod[i].toExponential(6)}</td>
-         <td>${g[i].toFixed(6)}</td>
-         <td><b>${w[i].toFixed(6)}</b></td>`;
-      tbody.appendChild(tr);
-    });
-    tb.appendChild(tbody);
-  }
-
-  function renderConsistency(lamMax, CI, CR, ri){
-    const box = $("ahpConsistency");
-    const ok = (CR <= 0.10);
-    box.innerHTML =
-      `<div>m = <b>${crit.length}</b></div>
-       <div>λ<sub>max</sub> = <b>${lamMax.toFixed(6)}</b></div>
-       <div>CI = <b>${CI.toFixed(6)}</b></div>
-       <div>RI = <b>${ri.toFixed(2)}</b></div>
-       <div>CR = <b>${CR.toFixed(6)}</b> → ${ok ? "<b style='color:#16a34a'>ACCEPTABLE (≤ 0.10)</b>" : "<b style='color:#dc2626'>NOT OK (&gt; 0.10)</b>"}</div>
-       <div class="hint" style="margin-top:6px">If CR not OK, revise pairwise values until CR ≤ 0.10.</div>`;
-  }
-
-  // preload sample
-  initAHP(SAMPLE_TEXT);
-
-})();
-</script>
-</body>
-</html>
-"""
-
-# Inject sample csv (SAFE)
-html = html.replace("__INJECT_SAMPLE_CSV__", SAFE_SAMPLE_CSV)
-
-components.html(html, height=2200, scrolling=True)
+    st.subheader("Normalized matrix (preview)")
+    preview = norm.copy()
+    preview.insert(0, "Alternative", df["Alternative"].astype(str))
+    st.dataframe(preview.style.format("{:.6f}"), use_container_width=True, height=260)
+    st.markdown("</div>", unsafe_allow_html=True)
