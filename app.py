@@ -200,7 +200,6 @@ html = r"""
           Format: first column = row labels, first row = column labels. Must be square.
           Values can be <b>1</b>, <b>2</b>, <b>1/3</b>, etc.
           <br/><br/>
-          (Kalau belum upload CSV, biar kosong je — takpe.)
         </p>
       </div>
 
