@@ -1,15 +1,13 @@
 # app.py
-import base64
-from pathlib import Path
 import streamlit as st
 import streamlit.components.v1 as components
+from pathlib import Path
 
 st.set_page_config(page_title="AHP-Rank", layout="wide")
 APP_DIR = Path(__file__).resolve().parent
 
 # ---------- Single source of truth for SAMPLE (PAIRWISE) CSV ----------
 def load_sample_csv_text() -> str:
-    # Fallback: AHP pairwise sample (7x7) using fractions
     return (
         "Criteria,B1,B2,B3,B4,B5,B6,B7\n"
         "B1,1,1/2,1/3,1/3,1/3,1/5,1\n"
@@ -50,32 +48,26 @@ html = r"""
 
   *{box-sizing:border-box}
   html,body{height:100%;margin:0}
-  html{scroll-behavior:smooth;}
 
-  /* THEME TOKENS */
-  body.dark{
-    --ink:#f5f5f5;
-    --grid:rgba(245,245,245,.22);
-    --tt-bg:#fff;
-    --tt-fg:#111;
+  body{
     font-family:ui-sans-serif,system-ui,-apple-system,"Segoe UI",Roboto,Arial;
+    transition: background .2s ease, color .2s ease;
+  }
+
+  body.dark{
     color:var(--text-light);
     background:linear-gradient(180deg,#0b0b0f 0%,#0b0b0f 35%,var(--grad-light) 120%);
   }
   body.light{
-    --ink:#111;
-    --grid:rgba(0,0,0,.16);
-    --tt-bg:#111;
-    --tt-fg:#fff;
-    font-family:ui-sans-serif,system-ui,-apple-system,"Segoe UI",Roboto,Arial;
     color:#111;
     background:linear-gradient(180deg,#f8fafc 0%,#f8fafc 40%,var(--pri-soft) 120%);
   }
 
   .container{max-width:1200px;margin:24px auto;padding:0 16px}
   .header{display:flex;align-items:center;justify-content:space-between;margin-bottom:12px}
-  .title{font-weight:800;font-size:28px;color:#f3e8ff} /* purple-ish white */
-  body.light .title{color:#2e1065}
+  .title{font-weight:800;font-size:28px;color:#f3e8ff}
+  body.light .title{color:#4c1d95}
+
   .row{display:flex;gap:10px;align-items:center;flex-wrap:wrap}
 
   .btn{
@@ -83,53 +75,21 @@ html = r"""
     padding:10px 14px;border-radius:12px;
     border:1px solid var(--pri-700);
     background:var(--pri);
-    color:#111; /* readable on pastel */
+    color:#111;
     cursor:pointer;
     font-weight:700;
     text-decoration:none;
     user-select:none;
   }
   .btn:hover{filter:brightness(0.96)}
+  .btn:disabled{opacity:.55;cursor:not-allowed}
 
   .tabs{display:flex;gap:8px;margin:12px 0;position:relative;z-index:10}
   .tab{
     padding:10px 14px;border-radius:12px;
     border:1px solid #333;background:#202329;color:#ddd;cursor:pointer
   }
-  body.light .tab{background:#ffffffaa;color:#111;border-color:#e5e7eb}
   .tab.active{background:var(--pri);border-color:var(--pri-700);color:#111;font-weight:800}
-
-  /* Step navigation bar (sticky) */
-  .stepbar{
-    position: sticky;
-    top: 12px;
-    z-index: 50;
-    display: flex;
-    gap: 8px;
-    flex-wrap: wrap;
-    padding: 10px 12px;
-    border-radius: 16px;
-    border: 1px solid rgba(167,139,250,.35);
-    background: rgba(15,17,21,.55);
-    backdrop-filter: blur(10px);
-    margin: 12px 0 16px 0;
-  }
-  body.light .stepbar{
-    background: rgba(255,255,255,.65);
-    border-color: rgba(124,58,237,.25);
-  }
-  .stepbtn{
-    display:inline-flex;align-items:center;gap:8px;
-    padding:8px 12px;border-radius:999px;
-    border:1px solid rgba(167,139,250,.6);
-    background:rgba(167,139,250,.12);
-    color: inherit;
-    text-decoration:none;
-    font-size:12px;
-    font-weight:700;
-    user-select:none;
-  }
-  .stepbtn:hover{filter:brightness(0.97)}
 
   .grid{display:grid;gap:16px;grid-template-columns:1fr}
   @media (min-width:1024px){.grid{grid-template-columns:1fr 2fr}}
@@ -137,48 +97,70 @@ html = r"""
   .card{
     border-radius:16px;padding:18px;
     border:1px solid var(--border-light);
-    backdrop-filter:blur(6px)
+    backdrop-filter:blur(6px);
   }
   .card.dark{background:var(--card-dark);color:#e5e7eb;border-color:var(--border-dark)}
   .card.light{background:var(--card-light);color:#111;border-color:var(--border-light)}
 
-  /* In light mode, make "dark" cards also light */
-  body.light .card.dark{background:var(--card-light);color:#111;border-color:var(--border-light)}
+  body.light .card.dark{
+    background:var(--card-light);
+    color:#111;
+    border-color:var(--border-light);
+  }
 
-  .section-title{font-weight:700;font-size:18px;margin-bottom:12px;color:#e9d5ff}
+  .section-title{font-weight:800;font-size:20px;margin-bottom:10px;color:#e9d5ff}
   body.light .section-title{color:#5b21b6}
-  .hint{font-size:12px;opacity:.85}
+
+  .hint{font-size:12px;opacity:.85;line-height:1.4}
 
   .table-wrap{overflow:auto;max-height:360px}
   table{width:100%;border-collapse:collapse;font-size:14px;color:#111}
   th,td{text-align:left;padding:8px 10px;border-bottom:1px solid #e5e7eb;white-space:nowrap}
 
+  body.dark table{color:#111;} /* tables are in light cards; keep readable */
+
   .chart2{width:100%;height:360px;border:1px dashed #9ca3af;border-radius:12px;background:transparent}
 
-  .pill{
-    display:inline-flex;align-items:center;gap:8px;
-    padding:6px 10px;border-radius:999px;
-    border:1px solid rgba(167,139,250,.6);
-    background:rgba(167,139,250,.12);
-    margin:0 6px 6px 0;font-size:12px;color:inherit
+  /* TOP NAV (scroll buttons) */
+  .topnav{
+    position:sticky; top:0;
+    z-index:999;
+    margin:10px 0 14px 0;
+    padding:10px;
+    border-radius:16px;
+    border:1px solid rgba(167,139,250,.35);
+    background:rgba(255,255,255,.65);
+    backdrop-filter:blur(10px);
+    display:flex; gap:10px; flex-wrap:wrap;
+    align-items:center;
+  }
+  body.dark .topnav{
+    background:rgba(15,17,21,.65);
+    border-color:rgba(167,139,250,.25);
   }
 
-  /* Tooltip */
-  #tt{
-    position:fixed;display:none;pointer-events:none;
-    background:var(--tt-bg);
-    color:var(--tt-fg);
-    padding:6px 8px;border-radius:8px;font-size:12px;
-    box-shadow:0 12px 24px rgba(0,0,0,.18);
-    border:1px solid rgba(229,231,235,.9);
-    z-index:9999
+  .navbtn{
+    padding:9px 12px;
+    border-radius:999px;
+    border:1px solid rgba(167,139,250,.7);
+    background:rgba(167,139,250,.10);
+    color:inherit;
+    cursor:pointer;
+    font-weight:700;
   }
+  .navbtn:hover{filter:brightness(0.98)}
+  .navbtn:disabled{opacity:.45;cursor:not-allowed}
+
+  .spacer{flex:1}
+
+  /* Tooltip */
+  #tt{position:fixed;display:none;pointer-events:none;background:#fff;color:#111;
+      padding:6px 8px;border-radius:8px;font-size:12px;box-shadow:0 12px 24px rgba(0,0,0,.18);border:1px solid #e5e7eb;z-index:9999}
 
   .ok{color:#16a34a;font-weight:900}
   .bad{color:#dc2626;font-weight:900}
 </style>
 </head>
-
 <body class="dark">
 <div class="container">
 
@@ -186,23 +168,25 @@ html = r"""
     <div class="title">AHP-Rank</div>
     <div class="row">
       <a class="btn" id="downloadSample">⬇️ Download Sample</a>
-      <button class="btn" id="loadSample" type="button">📄 Load Sample</button>
-      <button class="btn" id="themeToggle" type="button">🌙 Dark</button>
+      <button class="btn" id="loadSample">📄 Load Sample</button>
+      <button class="btn" id="themeToggle">🌙 Dark</button>
     </div>
+  </div>
+
+  <!-- TOP BAR: jump-to-step buttons + download results -->
+  <div class="topnav">
+    <button class="navbtn" id="navS2" disabled>Step 2 Π</button>
+    <button class="navbtn" id="navS3" disabled>Step 3 GM</button>
+    <button class="navbtn" id="navS4" disabled>Step 4 ω</button>
+    <button class="navbtn" id="navS5" disabled>Step 5 P×ω</button>
+    <button class="navbtn" id="navS6" disabled>Step 6 λmax</button>
+    <button class="navbtn" id="navS7" disabled>Step 7 SI & CR</button>
+    <span class="spacer"></span>
+    <a class="btn" id="downloadResults" style="display:none">⬇️ Download Results</a>
   </div>
 
   <div class="tabs">
     <button type="button" class="tab active" id="tabAHP">AHP Method (Saaty)</button>
-  </div>
-
-  <!-- STEP NAV BAR (show only after results exist) -->
-  <div id="stepbar" class="stepbar" style="display:none">
-    <a class="stepbtn" href="#s2">Step 2 Π</a>
-    <a class="stepbtn" href="#s3">Step 3 GM</a>
-    <a class="stepbtn" href="#s4">Step 4 ω</a>
-    <a class="stepbtn" href="#s5">Step 5 P×ω</a>
-    <a class="stepbtn" href="#s6">Step 6 λmax</a>
-    <a class="stepbtn" href="#s7">Step 7 SI & CR</a>
   </div>
 
   <div class="grid">
@@ -212,20 +196,18 @@ html = r"""
         <div class="section-title">Step 1: Upload Pairwise Matrix (CSV)</div>
         <label for="csv1" class="btn">📤 Choose CSV</label>
         <input id="csv1" type="file" accept=".csv" style="display:none"/>
-        <p class="hint">Format: first column = row labels, first row = column labels. Must be square. Values can be <b>1</b>, <b>2</b>, <b>1/3</b>, etc.</p>
+        <p class="hint">
+          Format: first column = row labels, first row = column labels. Must be square.
+          Values can be <b>1</b>, <b>2</b>, <b>1/3</b>, etc.
+          <br/><br/>
+          (Kalau belum upload CSV, biar kosong je — takpe.)
+        </p>
       </div>
 
       <div id="stat" class="card dark" style="display:none">
         <div class="section-title">Consistency Summary</div>
         <div id="statBox" class="hint"></div>
-        <div style="margin-top:10px">
-          <span class="pill">Step 2 Π</span>
-          <span class="pill">Step 3 GM</span>
-          <span class="pill">Step 4 ω</span>
-          <span class="pill">Step 5 P×ω</span>
-          <span class="pill">Step 6 λmax</span>
-          <span class="pill">Step 7 SI & CR</span>
-        </div>
+        <!-- REMOVED: per-step pills under summary (you wanted to remove it) -->
       </div>
 
       <div id="wcard" class="card dark" style="display:none">
@@ -301,28 +283,54 @@ html = r"""
   $("downloadSample").download = "ahp_pairwise_sample.csv";
   $("loadSample").onclick = ()=> initAHP(SAMPLE_TEXT);
 
-  // ---------- theme toggle ----------
-  const body = document.body;
+  // ---------- DARK/LIGHT MODE ----------
+  let isDark = true;
   const themeBtn = $("themeToggle");
-  function setTheme(isDark){
+  const body = document.body;
+
+  function applyTheme(){
     if(isDark){
       body.classList.remove("light");
       body.classList.add("dark");
-      themeBtn.innerText = "🌙 Dark";
+      themeBtn.innerText="🌙 Dark";
     }else{
       body.classList.remove("dark");
       body.classList.add("light");
-      themeBtn.innerText = "☀️ Light";
+      themeBtn.innerText="☀️ Light";
     }
-    // redraw charts if we already computed
-    if(window.__AHP__ && window.__AHP__.labels){
-      const {labels,w,lam} = window.__AHP__;
-      drawBar("barW", labels.map((name,i)=>({name, value:w[i]})));
-      drawLine("lineL", labels.map((name,i)=>({name, x:i+1, value:lam[i]})));
+    // re-draw charts if data exists (keeps them visible after theme change)
+    if(window.__AHP_DATA__){
+      const {labels,w,lam}=window.__AHP_DATA__;
+      drawBar("barW", labels.map((n,i)=>({name:n,value:w[i]})));
+      drawLine("lineL", labels.map((n,i)=>({name:n,x:i+1,value:lam[i]})));
     }
   }
-  themeBtn.onclick = ()=> setTheme(!body.classList.contains("dark"));
-  setTheme(true); // default dark
+  themeBtn.onclick = ()=>{ isDark = !isDark; applyTheme(); };
+  applyTheme();
+
+  // ---------- TOP NAV (scroll to section) ----------
+  function scrollToId(id){
+    const el = $(id);
+    if(!el) return;
+    el.scrollIntoView({behavior:"smooth", block:"start"});
+  }
+
+  const navMap = [
+    ["navS2","s2"],
+    ["navS3","s3"],
+    ["navS4","s4"],
+    ["navS5","s5"],
+    ["navS6","s6"],
+    ["navS7","s7"],
+  ];
+  navMap.forEach(([btn, target])=>{
+    $(btn).onclick = ()=> scrollToId(target);
+  });
+
+  function setNavEnabled(on){
+    navMap.forEach(([btn])=> { $(btn).disabled = !on; });
+  }
+  setNavEnabled(false);
 
   // ---------- CSV parser ----------
   function parseCSVText(text){
@@ -396,10 +404,6 @@ html = r"""
   function showTT(x,y,html){ TT.style.display="block"; TT.style.left=(x+12)+"px"; TT.style.top=(y+12)+"px"; TT.innerHTML=html; }
   function hideTT(){ TT.style.display="none"; }
 
-  // ---------- colors from CSS vars ----------
-  function ink(){ return getComputedStyle(document.body).getPropertyValue("--ink").trim() || "#111"; }
-  function grid(){ return getComputedStyle(document.body).getPropertyValue("--grid").trim() || "rgba(0,0,0,.15)"; }
-
   // ---------- Charts ----------
   function drawBar(svgId, data){
     const svg=$(svgId); while(svg.firstChild) svg.removeChild(svg.firstChild);
@@ -409,22 +413,23 @@ html = r"""
     const max=Math.max(...data.map(d=>d.value))||1;
     const cell=(W-padL-padR)/data.length, barW=cell*0.8;
 
-    const axis = ink();
-    const gcol = grid();
+    const axisColor = isDark ? "#e5e7eb" : "#111";
+    const gridColor = isDark ? "rgba(229,231,235,.35)" : "rgba(17,17,17,.25)";
+    const textColor = isDark ? "#e5e7eb" : "#111";
 
     const yAxis=document.createElementNS("http://www.w3.org/2000/svg","line");
-    yAxis.setAttribute("x1",padL); yAxis.setAttribute("x2",padL); yAxis.setAttribute("y1",padT); yAxis.setAttribute("y2",H-padB); yAxis.setAttribute("stroke",axis); svg.appendChild(yAxis);
+    yAxis.setAttribute("x1",padL); yAxis.setAttribute("x2",padL); yAxis.setAttribute("y1",padT); yAxis.setAttribute("y2",H-padB); yAxis.setAttribute("stroke",axisColor); svg.appendChild(yAxis);
     const xAxis=document.createElementNS("http://www.w3.org/2000/svg","line");
-    xAxis.setAttribute("x1",padL); xAxis.setAttribute("x2",W-padR); xAxis.setAttribute("y1",H-padB); xAxis.setAttribute("y2",H-padB); xAxis.setAttribute("stroke",axis); svg.appendChild(xAxis);
+    xAxis.setAttribute("x1",padL); xAxis.setAttribute("x2",W-padR); xAxis.setAttribute("y1",H-padB); xAxis.setAttribute("y2",H-padB); xAxis.setAttribute("stroke",axisColor); svg.appendChild(xAxis);
 
     for(let t=0;t<=5;t++){
       const val=max*t/5, y=H-padB-(H-padT-padB)*(val/max);
       const gl=document.createElementNS("http://www.w3.org/2000/svg","line");
       gl.setAttribute("x1",padL); gl.setAttribute("x2",W-padR); gl.setAttribute("y1",y); gl.setAttribute("y2",y);
-      gl.setAttribute("stroke",gcol); gl.setAttribute("stroke-dasharray","3 3"); svg.appendChild(gl);
+      gl.setAttribute("stroke",gridColor); gl.setAttribute("stroke-dasharray","3 3"); svg.appendChild(gl);
       const tx=document.createElementNS("http://www.w3.org/2000/svg","text");
       tx.setAttribute("x",padL-10); tx.setAttribute("y",y+4); tx.setAttribute("text-anchor","end");
-      tx.setAttribute("font-size","12"); tx.setAttribute("fill",axis); tx.textContent=val.toFixed(3); svg.appendChild(tx);
+      tx.setAttribute("font-size","12"); tx.setAttribute("fill",textColor); tx.textContent=val.toFixed(3); svg.appendChild(tx);
     }
 
     data.forEach((d,i)=>{
@@ -438,7 +443,7 @@ html = r"""
 
       const lbl=document.createElementNS("http://www.w3.org/2000/svg","text");
       lbl.setAttribute("x",x+barW/2); lbl.setAttribute("y",H-12); lbl.setAttribute("text-anchor","middle");
-      lbl.setAttribute("font-size","12"); lbl.setAttribute("fill",axis); lbl.textContent=d.name; svg.appendChild(lbl);
+      lbl.setAttribute("font-size","12"); lbl.setAttribute("fill",textColor); lbl.textContent=d.name; svg.appendChild(lbl);
     });
   }
 
@@ -448,8 +453,10 @@ html = r"""
     svg.setAttribute("viewBox","0 0 "+W+" "+H);
     const padL=50,padR=20,padT=14,padB=30;
 
-    const axis = ink();
-    const gcol = grid();
+    const axisColor = isDark ? "#e5e7eb" : "#111";
+    const textColor = isDark ? "#e5e7eb" : "#111";
+    const lineColor = isDark ? "#e5e7eb" : "#111";
+    const dotColor  = isDark ? "#e5e7eb" : "#111";
 
     const maxY=Math.max(...data.map(d=>d.value))||1;
     const minX=1, maxX=Math.max(...data.map(d=>d.x))||1;
@@ -458,17 +465,9 @@ html = r"""
     const sy=(v)=> H-padB-(H-padT-padB)*(v/maxY);
 
     const yAxis=document.createElementNS("http://www.w3.org/2000/svg","line");
-    yAxis.setAttribute("x1",padL); yAxis.setAttribute("x2",padL); yAxis.setAttribute("y1",padT); yAxis.setAttribute("y2",H-padB); yAxis.setAttribute("stroke",axis); svg.appendChild(yAxis);
+    yAxis.setAttribute("x1",padL); yAxis.setAttribute("x2",padL); yAxis.setAttribute("y1",padT); yAxis.setAttribute("y2",H-padB); yAxis.setAttribute("stroke",axisColor); svg.appendChild(yAxis);
     const xAxis=document.createElementNS("http://www.w3.org/2000/svg","line");
-    xAxis.setAttribute("x1",padL); xAxis.setAttribute("x2",W-padR); xAxis.setAttribute("y1",H-padB); xAxis.setAttribute("y2",H-padB); xAxis.setAttribute("stroke",axis); svg.appendChild(xAxis);
-
-    // gridlines
-    for(let t=0;t<=5;t++){
-      const val=maxY*t/5, y=H-padB-(H-padT-padB)*(val/maxY);
-      const gl=document.createElementNS("http://www.w3.org/2000/svg","line");
-      gl.setAttribute("x1",padL); gl.setAttribute("x2",W-padR); gl.setAttribute("y1",y); gl.setAttribute("y2",y);
-      gl.setAttribute("stroke",gcol); gl.setAttribute("stroke-dasharray","3 3"); svg.appendChild(gl);
-    }
+    xAxis.setAttribute("x1",padL); xAxis.setAttribute("x2",W-padR); xAxis.setAttribute("y1",H-padB); xAxis.setAttribute("y2",H-padB); xAxis.setAttribute("stroke",axisColor); svg.appendChild(xAxis);
 
     const p=document.createElementNS("http://www.w3.org/2000/svg","path");
     let dstr="";
@@ -477,21 +476,75 @@ html = r"""
       dstr += (i===0? "M":"L")+x+" "+y+" ";
 
       const c=document.createElementNS("http://www.w3.org/2000/svg","circle");
-      c.setAttribute("cx",x); c.setAttribute("cy",y); c.setAttribute("r","4"); c.setAttribute("fill",axis);
+      c.setAttribute("cx",x); c.setAttribute("cy",y); c.setAttribute("r","4"); c.setAttribute("fill",dotColor);
       c.addEventListener("mousemove",(ev)=> showTT(ev.clientX, ev.clientY, `<b>${pt.name}</b><br/>λᵢ = ${pt.value.toFixed(6)}`));
       c.addEventListener("mouseleave", hideTT);
       svg.appendChild(c);
 
       const tx=document.createElementNS("http://www.w3.org/2000/svg","text");
       tx.setAttribute("x",x); tx.setAttribute("y",H-10);
-      tx.setAttribute("text-anchor","middle"); tx.setAttribute("font-size","11"); tx.setAttribute("fill",axis);
+      tx.setAttribute("text-anchor","middle"); tx.setAttribute("font-size","11"); tx.setAttribute("fill",textColor);
       tx.textContent = pt.x; svg.appendChild(tx);
     });
     p.setAttribute("d", dstr.trim());
     p.setAttribute("fill","none");
-    p.setAttribute("stroke",axis);
+    p.setAttribute("stroke",lineColor);
     p.setAttribute("stroke-width","2");
     svg.appendChild(p);
+  }
+
+  // ---------- DOWNLOAD RESULTS ----------
+  function buildResultsCSV(res){
+    const lines=[];
+    lines.push("AHP Results");
+    lines.push("");
+
+    lines.push("Consistency");
+    lines.push("m,lambda_max,SI,RI,CR,decision,max_reciprocal_error");
+    lines.push([
+      res.m,
+      res.lam_max.toFixed(9),
+      res.SI.toFixed(9),
+      res.ri.toFixed(4),
+      res.CR.toFixed(9),
+      (res.CR<=0.10 ? "ACCEPTABLE" : "NOT OK"),
+      res.maxErr.toExponential(2)
+    ].join(","));
+    lines.push("");
+
+    lines.push("Weights");
+    lines.push("criteria,Pi,GM,w,Pw,lambda_i");
+    for(let i=0;i<res.labels.length;i++){
+      lines.push([
+        safeCSV(res.labels[i]),
+        res.Pi[i].toFixed(9),
+        res.GM[i].toFixed(9),
+        res.w[i].toFixed(9),
+        res.Pw[i].toFixed(9),
+        res.lam[i].toFixed(9),
+      ].join(","));
+    }
+    lines.push("");
+
+    // numeric P
+    lines.push("Pairwise Matrix P (numeric)");
+    lines.push(["Criteria"].concat(res.labels.map(safeCSV)).join(","));
+    for(let i=0;i<res.labels.length;i++){
+      lines.push([safeCSV(res.labels[i])].concat(res.P[i].map(x=>x.toFixed(6))).join(","));
+    }
+
+    return lines.join("\n");
+  }
+  function safeCSV(s){
+    const t = String(s ?? "");
+    if(/[,"\n]/.test(t)) return '"' + t.replace(/"/g,'""') + '"';
+    return t;
+  }
+  function setResultsDownload(csvText){
+    const a = $("downloadResults");
+    a.href = "data:text/csv;charset=utf-8," + encodeURIComponent(csvText);
+    a.download = "ahp_results.csv";
+    a.style.display = "";
   }
 
   // ---------- AHP core ----------
@@ -517,7 +570,7 @@ html = r"""
       const row = [];
       for(let j=0;j<m;j++){
         const v = parseRatio(r[j+1]);
-        if(!isFinite(v) || v<=0){ alert(`Invalid value at row ${rowLabels[i]}, col ${colLabels[j]}`); return; }
+        if(!isFinite(v) || v<=0){ alert("Invalid value at row "+rowLabels[i]+", col "+colLabels[j]); return; }
         row.push(v);
       }
       P.push(row);
@@ -566,9 +619,6 @@ html = r"""
     const ri = RI(m);
     const CR = (ri===0) ? 0 : (SI/ri);
 
-    // store for redraw on theme toggle
-    window.__AHP__ = {labels: rowLabels, w, lam};
-
     // ---------- Render tables ----------
     const Pcols = [" "].concat(colLabels);
     const Prows = rowLabels.map((rl,i)=> [rl].concat(P[i].map(x=> x.toFixed(6))) );
@@ -599,20 +649,27 @@ html = r"""
 
     // ---------- Summary box ----------
     const ok = (CR<=0.10);
-    $("statBox").innerHTML = `
-      <div>Reciprocal check max error: <b>${maxErr.toExponential(2)}</b></div>
-      <div style="margin-top:6px"><b>λmax</b> = ${lam_max.toFixed(9)}</div>
-      <div><b>SI</b> = ${SI.toFixed(9)}</div>
-      <div><b>RI</b> = ${ri.toFixed(4)}</div>
-      <div><b>CR</b> = ${CR.toFixed(9)} &nbsp;→&nbsp; ${ok ? '<span class="ok">ACCEPTABLE</span>' : '<span class="bad">NOT OK</span>'}</div>
-    `;
+    $("statBox").innerHTML =
+      "<div>Reciprocal check max error: <b>"+maxErr.toExponential(2)+"</b></div>"+
+      "<div style='margin-top:6px'><b>λmax</b> = "+lam_max.toFixed(9)+"</div>"+
+      "<div><b>SI</b> = "+SI.toFixed(9)+"</div>"+
+      "<div><b>RI</b> = "+ri.toFixed(4)+"</div>"+
+      "<div><b>CR</b> = "+CR.toFixed(9)+" &nbsp;→&nbsp; "+(ok ? "<span class='ok'>ACCEPTABLE</span>" : "<span class='bad'>NOT OK</span>")+"</div>";
 
     // ---------- Charts ----------
+    window.__AHP_DATA__ = { labels: rowLabels, w, lam };
     drawBar("barW", rowLabels.map((name,i)=> ({name, value:w[i]})));
     drawLine("lineL", rowLabels.map((name,i)=> ({name, x:i+1, value:lam[i]})));
 
+    // ---------- Enable nav + results download ----------
+    setNavEnabled(true);
+    const resObj = {
+      labels: rowLabels, m, P, Pi, GM, w, Pw, lam, lam_max, SI, ri, CR, maxErr
+    };
+    const resultsCSV = buildResultsCSV(resObj);
+    setResultsDownload(resultsCSV);
+
     // ---------- Show sections ----------
-    show($("stepbar"),true);
     show($("stat"),true);
     show($("wcard"),true);
     show($("lcard"),true);
@@ -634,10 +691,8 @@ html = r"""
     r.readAsText(f);
   };
 
-  // IMPORTANT:
-  // Start EMPTY until user uploads CSV or clicks "Load Sample".
-  // (If you want auto preload sample, uncomment next line)
-  // initAHP(SAMPLE_TEXT);
+  // IMPORTANT: start empty (no auto-run) - user said kosong pun takpe
+  // initAHP(SAMPLE_TEXT);  <-- intentionally not auto-called
 
 })();
 </script>
@@ -645,7 +700,7 @@ html = r"""
 </html>
 """
 
-# inject sample
+# inject sample safely (no f-string issues)
 html = html.replace("__INJECT_SAMPLE_CSV__", SAMPLE_CSV.replace("`", "\\`"))
 
 components.html(html, height=4200, scrolling=True)
