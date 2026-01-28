@@ -9,6 +9,7 @@ APP_DIR = Path(__file__).resolve().parent
 
 # ---------- Single source of truth for SAMPLE (PAIRWISE) CSV ----------
 def load_sample_csv_text() -> str:
+    # Fallback: AHP pairwise sample (7x7) using fractions
     return (
         "Criteria,B1,B2,B3,B4,B5,B6,B7\n"
         "B1,1,1/2,1/3,1/3,1/3,1/5,1\n"
@@ -45,39 +46,36 @@ html = r"""
     --pri-soft:#ede9fe;   /* very light purple */
     --border-dark:#262b35;
     --border-light:#f1f5f9;
-
-    /* chart ink depends on theme (set by body class) */
-    --chart-ink:#ffffff;
-    --chart-grid:rgba(255,255,255,.35);
-    --chart-tooltip-bg:#fff;
-    --chart-tooltip-fg:#111;
   }
 
   *{box-sizing:border-box}
   html,body{height:100%;margin:0}
-  body{
-    font-family:ui-sans-serif,system-ui,-apple-system,"Segoe UI",Roboto,Arial;
-  }
+  html{scroll-behavior:smooth;}
 
+  /* THEME TOKENS */
   body.dark{
+    --ink:#f5f5f5;
+    --grid:rgba(245,245,245,.22);
+    --tt-bg:#fff;
+    --tt-fg:#111;
+    font-family:ui-sans-serif,system-ui,-apple-system,"Segoe UI",Roboto,Arial;
     color:var(--text-light);
     background:linear-gradient(180deg,#0b0b0f 0%,#0b0b0f 35%,var(--grad-light) 120%);
-    --chart-ink:#ffffff;
-    --chart-grid:rgba(255,255,255,.35);
   }
-
   body.light{
+    --ink:#111;
+    --grid:rgba(0,0,0,.16);
+    --tt-bg:#111;
+    --tt-fg:#fff;
+    font-family:ui-sans-serif,system-ui,-apple-system,"Segoe UI",Roboto,Arial;
     color:#111;
     background:linear-gradient(180deg,#f8fafc 0%,#f8fafc 40%,var(--pri-soft) 120%);
-    --chart-ink:#111111;
-    --chart-grid:rgba(17,17,17,.25);
   }
 
   .container{max-width:1200px;margin:24px auto;padding:0 16px}
   .header{display:flex;align-items:center;justify-content:space-between;margin-bottom:12px}
-  .title{font-weight:800;font-size:28px;color:#f3e8ff}
-  body.light .title{color:#4c1d95}
-
+  .title{font-weight:800;font-size:28px;color:#f3e8ff} /* purple-ish white */
+  body.light .title{color:#2e1065}
   .row{display:flex;gap:10px;align-items:center;flex-wrap:wrap}
 
   .btn{
@@ -89,6 +87,7 @@ html = r"""
     cursor:pointer;
     font-weight:700;
     text-decoration:none;
+    user-select:none;
   }
   .btn:hover{filter:brightness(0.96)}
 
@@ -97,7 +96,40 @@ html = r"""
     padding:10px 14px;border-radius:12px;
     border:1px solid #333;background:#202329;color:#ddd;cursor:pointer
   }
+  body.light .tab{background:#ffffffaa;color:#111;border-color:#e5e7eb}
   .tab.active{background:var(--pri);border-color:var(--pri-700);color:#111;font-weight:800}
+
+  /* Step navigation bar (sticky) */
+  .stepbar{
+    position: sticky;
+    top: 12px;
+    z-index: 50;
+    display: flex;
+    gap: 8px;
+    flex-wrap: wrap;
+    padding: 10px 12px;
+    border-radius: 16px;
+    border: 1px solid rgba(167,139,250,.35);
+    background: rgba(15,17,21,.55);
+    backdrop-filter: blur(10px);
+    margin: 12px 0 16px 0;
+  }
+  body.light .stepbar{
+    background: rgba(255,255,255,.65);
+    border-color: rgba(124,58,237,.25);
+  }
+  .stepbtn{
+    display:inline-flex;align-items:center;gap:8px;
+    padding:8px 12px;border-radius:999px;
+    border:1px solid rgba(167,139,250,.6);
+    background:rgba(167,139,250,.12);
+    color: inherit;
+    text-decoration:none;
+    font-size:12px;
+    font-weight:700;
+    user-select:none;
+  }
+  .stepbtn:hover{filter:brightness(0.97)}
 
   .grid{display:grid;gap:16px;grid-template-columns:1fr}
   @media (min-width:1024px){.grid{grid-template-columns:1fr 2fr}}
@@ -109,10 +141,12 @@ html = r"""
   }
   .card.dark{background:var(--card-dark);color:#e5e7eb;border-color:var(--border-dark)}
   .card.light{background:var(--card-light);color:#111;border-color:var(--border-light)}
+
+  /* In light mode, make "dark" cards also light */
   body.light .card.dark{background:var(--card-light);color:#111;border-color:var(--border-light)}
 
   .section-title{font-weight:700;font-size:18px;margin-bottom:12px;color:#e9d5ff}
-  body.light .section-title{color:#7c3aed}
+  body.light .section-title{color:#5b21b6}
   .hint{font-size:12px;opacity:.85}
 
   .table-wrap{overflow:auto;max-height:360px}
@@ -120,20 +154,25 @@ html = r"""
   th,td{text-align:left;padding:8px 10px;border-bottom:1px solid #e5e7eb;white-space:nowrap}
 
   .chart2{width:100%;height:360px;border:1px dashed #9ca3af;border-radius:12px;background:transparent}
-  .chartTall{width:100%;height:480px;border:1px dashed #9ca3af;border-radius:12px;background:transparent}
 
   .pill{
     display:inline-flex;align-items:center;gap:8px;
     padding:6px 10px;border-radius:999px;
     border:1px solid rgba(167,139,250,.6);
     background:rgba(167,139,250,.12);
-    margin:0 6px 6px 0;font-size:12px;color:#fff
+    margin:0 6px 6px 0;font-size:12px;color:inherit
   }
-  body.light .pill{color:#111}
 
   /* Tooltip */
-  #tt{position:fixed;display:none;pointer-events:none;background:var(--chart-tooltip-bg);color:var(--chart-tooltip-fg);
-      padding:6px 8px;border-radius:8px;font-size:12px;box-shadow:0 12px 24px rgba(0,0,0,.18);border:1px solid #e5e7eb;z-index:9999}
+  #tt{
+    position:fixed;display:none;pointer-events:none;
+    background:var(--tt-bg);
+    color:var(--tt-fg);
+    padding:6px 8px;border-radius:8px;font-size:12px;
+    box-shadow:0 12px 24px rgba(0,0,0,.18);
+    border:1px solid rgba(229,231,235,.9);
+    z-index:9999
+  }
 
   .ok{color:#16a34a;font-weight:900}
   .bad{color:#dc2626;font-weight:900}
@@ -147,13 +186,23 @@ html = r"""
     <div class="title">AHP-Rank</div>
     <div class="row">
       <a class="btn" id="downloadSample">⬇️ Download Sample</a>
-      <button class="btn" id="loadSample">📄 Load Sample</button>
-      <button class="btn" id="themeToggle">🌙 Dark</button>
+      <button class="btn" id="loadSample" type="button">📄 Load Sample</button>
+      <button class="btn" id="themeToggle" type="button">🌙 Dark</button>
     </div>
   </div>
 
   <div class="tabs">
     <button type="button" class="tab active" id="tabAHP">AHP Method (Saaty)</button>
+  </div>
+
+  <!-- STEP NAV BAR (show only after results exist) -->
+  <div id="stepbar" class="stepbar" style="display:none">
+    <a class="stepbtn" href="#s2">Step 2 Π</a>
+    <a class="stepbtn" href="#s3">Step 3 GM</a>
+    <a class="stepbtn" href="#s4">Step 4 ω</a>
+    <a class="stepbtn" href="#s5">Step 5 P×ω</a>
+    <a class="stepbtn" href="#s6">Step 6 λmax</a>
+    <a class="stepbtn" href="#s7">Step 7 SI & CR</a>
   </div>
 
   <div class="grid">
@@ -252,31 +301,30 @@ html = r"""
   $("downloadSample").download = "ahp_pairwise_sample.csv";
   $("loadSample").onclick = ()=> initAHP(SAMPLE_TEXT);
 
-  // ---------- Dark/Light toggle (persist) ----------
+  // ---------- theme toggle ----------
+  const body = document.body;
   const themeBtn = $("themeToggle");
-  function setTheme(mode){
-    document.body.classList.remove("dark","light");
-    document.body.classList.add(mode);
-    localStorage.setItem("ahp_theme", mode);
-    themeBtn.textContent = (mode==="dark") ? "🌙 Dark" : "☀️ Light";
-
-    // redraw charts (ink changes with theme)
-    if(window.__AHP_DATA__){
-      const {rowLabels, w, lam} = window.__AHP_DATA__;
-      requestAnimationFrame(()=>{
-        drawBar("barW", rowLabels.map((name,i)=> ({name, value:w[i]})));
-        drawLine("lineL", rowLabels.map((name,i)=> ({name, x:i+1, value:lam[i]})));
-      });
+  function setTheme(isDark){
+    if(isDark){
+      body.classList.remove("light");
+      body.classList.add("dark");
+      themeBtn.innerText = "🌙 Dark";
+    }else{
+      body.classList.remove("dark");
+      body.classList.add("light");
+      themeBtn.innerText = "☀️ Light";
+    }
+    // redraw charts if we already computed
+    if(window.__AHP__ && window.__AHP__.labels){
+      const {labels,w,lam} = window.__AHP__;
+      drawBar("barW", labels.map((name,i)=>({name, value:w[i]})));
+      drawLine("lineL", labels.map((name,i)=>({name, x:i+1, value:lam[i]})));
     }
   }
-  themeBtn.onclick = ()=> {
-    const cur = document.body.classList.contains("dark") ? "dark" : "light";
-    setTheme(cur==="dark" ? "light" : "dark");
-  };
-  // load saved theme
-  setTheme(localStorage.getItem("ahp_theme") || "dark");
+  themeBtn.onclick = ()=> setTheme(!body.classList.contains("dark"));
+  setTheme(true); // default dark
 
-  // ---------- CSV parser (robust) ----------
+  // ---------- CSV parser ----------
   function parseCSVText(text){
     const rows=[]; let i=0, cur="", inQ=false, row=[];
     const pushCell=()=>{ row.push(cur); cur=""; };
@@ -290,12 +338,12 @@ html = r"""
         if(ch==='\"') inQ=true;
         else if(ch===',') pushCell();
         else if(ch==='\n'){ pushCell(); pushRow(); }
-        else if(ch==='\r'){ /* ignore */ }
+        else if(ch==='\r'){}
         else cur+=ch;
       }
       i++;
     }
-    pushCell(); if(row.length>1 || (row[0] ?? "").trim() !== "") pushRow();
+    pushCell(); if(row.length>1 || row[0] !== "") pushRow();
     return rows.map(r=> r.map(x=> String(x ?? "").trim()));
   }
 
@@ -348,38 +396,35 @@ html = r"""
   function showTT(x,y,html){ TT.style.display="block"; TT.style.left=(x+12)+"px"; TT.style.top=(y+12)+"px"; TT.innerHTML=html; }
   function hideTT(){ TT.style.display="none"; }
 
-  function chartInk(){
-    const cs = getComputedStyle(document.body);
-    return {
-      ink: (cs.getPropertyValue("--chart-ink") || "#111").trim(),
-      grid: (cs.getPropertyValue("--chart-grid") || "rgba(0,0,0,.25)").trim(),
-    };
-  }
+  // ---------- colors from CSS vars ----------
+  function ink(){ return getComputedStyle(document.body).getPropertyValue("--ink").trim() || "#111"; }
+  function grid(){ return getComputedStyle(document.body).getPropertyValue("--grid").trim() || "rgba(0,0,0,.15)"; }
 
   // ---------- Charts ----------
   function drawBar(svgId, data){
     const svg=$(svgId); while(svg.firstChild) svg.removeChild(svg.firstChild);
-    const {ink, grid} = chartInk();
-
     const W=(svg.getBoundingClientRect().width||800), H=(svg.getBoundingClientRect().height||360);
     svg.setAttribute("viewBox","0 0 "+W+" "+H);
     const padL=50,padR=20,padT=18,padB=44;
     const max=Math.max(...data.map(d=>d.value))||1;
     const cell=(W-padL-padR)/data.length, barW=cell*0.8;
 
+    const axis = ink();
+    const gcol = grid();
+
     const yAxis=document.createElementNS("http://www.w3.org/2000/svg","line");
-    yAxis.setAttribute("x1",padL); yAxis.setAttribute("x2",padL); yAxis.setAttribute("y1",padT); yAxis.setAttribute("y2",H-padB); yAxis.setAttribute("stroke",ink); svg.appendChild(yAxis);
+    yAxis.setAttribute("x1",padL); yAxis.setAttribute("x2",padL); yAxis.setAttribute("y1",padT); yAxis.setAttribute("y2",H-padB); yAxis.setAttribute("stroke",axis); svg.appendChild(yAxis);
     const xAxis=document.createElementNS("http://www.w3.org/2000/svg","line");
-    xAxis.setAttribute("x1",padL); xAxis.setAttribute("x2",W-padR); xAxis.setAttribute("y1",H-padB); xAxis.setAttribute("y2",H-padB); xAxis.setAttribute("stroke",ink); svg.appendChild(xAxis);
+    xAxis.setAttribute("x1",padL); xAxis.setAttribute("x2",W-padR); xAxis.setAttribute("y1",H-padB); xAxis.setAttribute("y2",H-padB); xAxis.setAttribute("stroke",axis); svg.appendChild(xAxis);
 
     for(let t=0;t<=5;t++){
       const val=max*t/5, y=H-padB-(H-padT-padB)*(val/max);
       const gl=document.createElementNS("http://www.w3.org/2000/svg","line");
       gl.setAttribute("x1",padL); gl.setAttribute("x2",W-padR); gl.setAttribute("y1",y); gl.setAttribute("y2",y);
-      gl.setAttribute("stroke",grid); gl.setAttribute("stroke-dasharray","3 3"); svg.appendChild(gl);
+      gl.setAttribute("stroke",gcol); gl.setAttribute("stroke-dasharray","3 3"); svg.appendChild(gl);
       const tx=document.createElementNS("http://www.w3.org/2000/svg","text");
       tx.setAttribute("x",padL-10); tx.setAttribute("y",y+4); tx.setAttribute("text-anchor","end");
-      tx.setAttribute("font-size","12"); tx.setAttribute("fill",ink); tx.textContent=val.toFixed(3); svg.appendChild(tx);
+      tx.setAttribute("font-size","12"); tx.setAttribute("fill",axis); tx.textContent=val.toFixed(3); svg.appendChild(tx);
     }
 
     data.forEach((d,i)=>{
@@ -393,17 +438,18 @@ html = r"""
 
       const lbl=document.createElementNS("http://www.w3.org/2000/svg","text");
       lbl.setAttribute("x",x+barW/2); lbl.setAttribute("y",H-12); lbl.setAttribute("text-anchor","middle");
-      lbl.setAttribute("font-size","12"); lbl.setAttribute("fill",ink); lbl.textContent=d.name; svg.appendChild(lbl);
+      lbl.setAttribute("font-size","12"); lbl.setAttribute("fill",axis); lbl.textContent=d.name; svg.appendChild(lbl);
     });
   }
 
   function drawLine(svgId, data){
     const svg=$(svgId); while(svg.firstChild) svg.removeChild(svg.firstChild);
-    const {ink, grid} = chartInk();
-
     const W=(svg.getBoundingClientRect().width||800), H=(svg.getBoundingClientRect().height||300);
     svg.setAttribute("viewBox","0 0 "+W+" "+H);
     const padL=50,padR=20,padT=14,padB=30;
+
+    const axis = ink();
+    const gcol = grid();
 
     const maxY=Math.max(...data.map(d=>d.value))||1;
     const minX=1, maxX=Math.max(...data.map(d=>d.x))||1;
@@ -412,38 +458,39 @@ html = r"""
     const sy=(v)=> H-padB-(H-padT-padB)*(v/maxY);
 
     const yAxis=document.createElementNS("http://www.w3.org/2000/svg","line");
-    yAxis.setAttribute("x1",padL); yAxis.setAttribute("x2",padL); yAxis.setAttribute("y1",padT); yAxis.setAttribute("y2",H-padB); yAxis.setAttribute("stroke",ink); svg.appendChild(yAxis);
+    yAxis.setAttribute("x1",padL); yAxis.setAttribute("x2",padL); yAxis.setAttribute("y1",padT); yAxis.setAttribute("y2",H-padB); yAxis.setAttribute("stroke",axis); svg.appendChild(yAxis);
     const xAxis=document.createElementNS("http://www.w3.org/2000/svg","line");
-    xAxis.setAttribute("x1",padL); xAxis.setAttribute("x2",W-padR); xAxis.setAttribute("y1",H-padB); xAxis.setAttribute("y2",H-padB); xAxis.setAttribute("stroke",ink); svg.appendChild(xAxis);
+    xAxis.setAttribute("x1",padL); xAxis.setAttribute("x2",W-padR); xAxis.setAttribute("y1",H-padB); xAxis.setAttribute("y2",H-padB); xAxis.setAttribute("stroke",axis); svg.appendChild(xAxis);
 
-    // light grid
-    for(let t=0;t<=4;t++){
-      const y = padT + (H-padT-padB)*(t/4);
+    // gridlines
+    for(let t=0;t<=5;t++){
+      const val=maxY*t/5, y=H-padB-(H-padT-padB)*(val/maxY);
       const gl=document.createElementNS("http://www.w3.org/2000/svg","line");
-      gl.setAttribute("x1",padL); gl.setAttribute("x2",W-padR);
-      gl.setAttribute("y1",y); gl.setAttribute("y2",y);
-      gl.setAttribute("stroke",grid); gl.setAttribute("stroke-dasharray","3 3");
-      svg.appendChild(gl);
+      gl.setAttribute("x1",padL); gl.setAttribute("x2",W-padR); gl.setAttribute("y1",y); gl.setAttribute("y2",y);
+      gl.setAttribute("stroke",gcol); gl.setAttribute("stroke-dasharray","3 3"); svg.appendChild(gl);
     }
 
     const p=document.createElementNS("http://www.w3.org/2000/svg","path");
     let dstr="";
-    data.slice().sort((a,b)=> a.x-b.x).forEach((pt,i)=>{
+    data.sort((a,b)=> a.x-b.x).forEach((pt,i)=>{
       const x=sx(pt.x), y=sy(pt.value);
       dstr += (i===0? "M":"L")+x+" "+y+" ";
 
       const c=document.createElementNS("http://www.w3.org/2000/svg","circle");
-      c.setAttribute("cx",x); c.setAttribute("cy",y); c.setAttribute("r","4"); c.setAttribute("fill",ink);
+      c.setAttribute("cx",x); c.setAttribute("cy",y); c.setAttribute("r","4"); c.setAttribute("fill",axis);
       c.addEventListener("mousemove",(ev)=> showTT(ev.clientX, ev.clientY, `<b>${pt.name}</b><br/>λᵢ = ${pt.value.toFixed(6)}`));
       c.addEventListener("mouseleave", hideTT);
       svg.appendChild(c);
 
       const tx=document.createElementNS("http://www.w3.org/2000/svg","text");
       tx.setAttribute("x",x); tx.setAttribute("y",H-10);
-      tx.setAttribute("text-anchor","middle"); tx.setAttribute("font-size","11"); tx.setAttribute("fill",ink);
+      tx.setAttribute("text-anchor","middle"); tx.setAttribute("font-size","11"); tx.setAttribute("fill",axis);
       tx.textContent = pt.x; svg.appendChild(tx);
     });
-    p.setAttribute("d", dstr.trim()); p.setAttribute("fill","none"); p.setAttribute("stroke",ink); p.setAttribute("stroke-width","2");
+    p.setAttribute("d", dstr.trim());
+    p.setAttribute("fill","none");
+    p.setAttribute("stroke",axis);
+    p.setAttribute("stroke-width","2");
     svg.appendChild(p);
   }
 
@@ -519,8 +566,8 @@ html = r"""
     const ri = RI(m);
     const CR = (ri===0) ? 0 : (SI/ri);
 
-    // Store for redraw on theme switch
-    window.__AHP_DATA__ = {rowLabels, w, lam};
+    // store for redraw on theme toggle
+    window.__AHP__ = {labels: rowLabels, w, lam};
 
     // ---------- Render tables ----------
     const Pcols = [" "].concat(colLabels);
@@ -560,7 +607,12 @@ html = r"""
       <div><b>CR</b> = ${CR.toFixed(9)} &nbsp;→&nbsp; ${ok ? '<span class="ok">ACCEPTABLE</span>' : '<span class="bad">NOT OK</span>'}</div>
     `;
 
-    // ---------- Show sections FIRST ----------
+    // ---------- Charts ----------
+    drawBar("barW", rowLabels.map((name,i)=> ({name, value:w[i]})));
+    drawLine("lineL", rowLabels.map((name,i)=> ({name, x:i+1, value:lam[i]})));
+
+    // ---------- Show sections ----------
+    show($("stepbar"),true);
     show($("stat"),true);
     show($("wcard"),true);
     show($("lcard"),true);
@@ -571,12 +623,6 @@ html = r"""
     show($("s5"),true);
     show($("s6"),true);
     show($("s7"),true);
-
-    // ---------- Charts (after visible) ----------
-    requestAnimationFrame(()=>{
-      drawBar("barW", rowLabels.map((name,i)=> ({name, value:w[i]})));
-      drawLine("lineL", rowLabels.map((name,i)=> ({name, x:i+1, value:lam[i]})));
-    });
   }
 
   // file upload
@@ -588,8 +634,10 @@ html = r"""
     r.readAsText(f);
   };
 
-  // preload sample
-  initAHP(SAMPLE_TEXT);
+  // IMPORTANT:
+  // Start EMPTY until user uploads CSV or clicks "Load Sample".
+  // (If you want auto preload sample, uncomment next line)
+  // initAHP(SAMPLE_TEXT);
 
 })();
 </script>
@@ -597,7 +645,7 @@ html = r"""
 </html>
 """
 
-# inject sample (keep backticks safe)
-html = html.replace("__INJECT_SAMPLE_CSV__", SAMPLE_CSV.replace("`","\\`"))
+# inject sample
+html = html.replace("__INJECT_SAMPLE_CSV__", SAMPLE_CSV.replace("`", "\\`"))
 
 components.html(html, height=4200, scrolling=True)
